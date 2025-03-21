@@ -20,14 +20,13 @@ def plot_dma_pressure_map():
     )
     
     # Add pipe network
-    for _, row in pipe_network_df.iterrows():
-        fig.add_trace(go.Scattermapbox(
-            lat=[row['Latitude Start'], row['Latitude End']],
-            lon=[row['Longitude Start'], row['Longitude End']],
-            mode='lines',
-            line=dict(width=2, color='blue'),
-            name=f"Pipe {row['Pipe ID']} (DMA {row['DMA_ID']})"
-        ))
+    pipe_network_df.rename(columns={
+    'Pipe ID': 'Pipe_ID',
+    'Latitude Start': 'Latitude_Start',
+    'Longitude Start': 'Longitude_Start',
+    'Latitude End': 'Latitude_End',
+    'Longitude End': 'Longitude_End'
+}, inplace=True)
     
     # Add pressure data
     fig.add_trace(go.Scattermapbox(
