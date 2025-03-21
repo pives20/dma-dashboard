@@ -1,0 +1,21 @@
+Pipe ID,DMA ID,Length (m),Diameter (mm),Material
+Pipe-1,DMA-5,446,150,Iron
+Pipe-2,DMA-8,178,100,PVC
+Pipe-3,DMA-10,185,150,Steel
+Pipe-4,DMA-6,278,100,Iron
+Pipe-5,DMA-8,205,250,Iron
+Pipe-6,DMA-2,253,200,Steel
+Pipe-7,DMA-8,116,250,Steel
+Pipe-8,DMA-10,449,200,PVC
+Pipe-9,DMA-4,58,200,Steel
+Pipe-10,DMA-2,175,100,Iron
+Pipe-11,DMA-5,490,200,PVC
+Pipe-12,DMA-10,29,100,Steel
+Pipe-13,DMA-9,70,250,Iron
+Pipe-14,DMA-4,181,150,Steel
+Pipe-15,DMA-5,471,200,Steel
+Pipe-16,DMA-3,205,150,Iron
+Pipe-17,DMA-6,336,100,Iron
+Pipe-18,DMA-4,343,250,Steel
+Pipe-19,DMA-10,344,200,PVC
+Pipe-20,DMA-3,251,200,Iron
