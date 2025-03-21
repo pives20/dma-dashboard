@@ -9,11 +9,22 @@ pipe_network_df = pd.read_csv("pipe_network.csv")
 pressure_df = pd.read_csv("pressure_data.csv")
 assets_df = pd.read_csv("assets_data.csv")
 
-# Ensure column names are stripped of whitespace
-dma_df.columns = dma_df.columns.str.strip()
-pipe_network_df.columns = pipe_network_df.columns.str.strip()
-pressure_df.columns = pressure_df.columns.str.strip()
-assets_df.columns = assets_df.columns.str.strip()
+# Ensure column names are formatted correctly
+def clean_column_names(df):
+    df.columns = df.columns.str.replace(r'\s+', ' ', regex=True).str.strip()
+    return df
+
+dma_df = clean_column_names(dma_df)
+pipe_network_df = clean_column_names(pipe_network_df)
+pressure_df = clean_column_names(pressure_df)
+assets_df = clean_column_names(assets_df)
+
+# Debug: Print actual column names to check formatting issues
+st.write("### Debug: Checking Column Names in Data Files")
+st.write("#### DMA Data Columns:", list(dma_df.columns))
+st.write("#### Pipe Network Data Columns:", list(pipe_network_df.columns))
+st.write("#### Pressure Data Columns:", list(pressure_df.columns))
+st.write("#### Assets Data Columns:", list(assets_df.columns))
 
 # Function to check required columns
 def validate_columns(df, required_columns, df_name):
@@ -30,7 +41,6 @@ valid_pipes = validate_columns(pipe_network_df, ['Pipe ID', 'Latitude Start', 'L
 valid_pressure = validate_columns(pressure_df, ['DMA ID', 'Pressure', 'Latitude', 'Longitude'], "Pressure Data")
 valid_assets = validate_columns(assets_df, ['Asset ID', 'Asset Type', 'Latitude', 'Longitude'], "Assets Data")
 
-# Function to plot an interactive DMA Map with pressure overlay
 def plot_dma_pressure_map():
     if not (valid_dma and valid_pipes and valid_pressure and valid_assets):
         st.error("❌ Cannot plot map due to missing columns. Check the errors above.")
@@ -44,7 +54,6 @@ def plot_dma_pressure_map():
         color_continuous_scale="YlOrRd"
     )
     
-    # Add pipe network
     for _, row in pipe_network_df.iterrows():
         fig.add_trace(go.Scattermapbox(
             lat=[row['Latitude Start'], row['Latitude End']],
@@ -54,7 +63,6 @@ def plot_dma_pressure_map():
             name=f"Pipe {row['Pipe ID']} (DMA {row['DMA_ID']})"
         ))
     
-    # Add pressure data
     fig.add_trace(go.Scattermapbox(
         lat=pressure_df['Latitude'],
         lon=pressure_df['Longitude'],
@@ -64,7 +72,6 @@ def plot_dma_pressure_map():
         name="Pressure Levels"
     ))
     
-    # Show assets
     for _, row in assets_df.iterrows():
         fig.add_trace(go.Scattermapbox(
             lat=[row['Latitude']],
@@ -78,11 +85,7 @@ def plot_dma_pressure_map():
     
     st.plotly_chart(fig, use_container_width=True)
 
-# Streamlit App
 st.title("DMA Leakage Reduction AI Dashboard")
-
-# Generate and display the DMA map with pressure overlay
 st.write("### DMA Network Map with Pressure Overlay")
 plot_dma_pressure_map()
-
 st.success("Analysis Complete!")
