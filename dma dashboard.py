@@ -9,10 +9,16 @@ pipe_network_df = pd.read_csv("pipe_network.csv")
 pressure_df = pd.read_csv("pressure_data.csv")
 assets_df = pd.read_csv("assets_data.csv")
 
+# Ensure column names are stripped of whitespace
+dma_df.columns = dma_df.columns.str.strip()
+pipe_network_df.columns = pipe_network_df.columns.str.strip()
+pressure_df.columns = pressure_df.columns.str.strip()
+assets_df.columns = assets_df.columns.str.strip()
+
 # Function to plot an interactive DMA Map with pressure overlay
 def plot_dma_pressure_map():
     fig = px.scatter_mapbox(
-        dma_df, lat='Latitude', lon='Longitude', color='Age (years)',
+        dma_df, lat='Latitude', lon='Longitude', color='DMA ID',
         size_max=10, zoom=12, height=600,
         mapbox_style="carto-darkmatter",
         title="DMA Network Map with Pressure Overlay",
@@ -20,13 +26,14 @@ def plot_dma_pressure_map():
     )
     
     # Add pipe network
-    pipe_network_df.rename(columns={
-    'Pipe ID': 'Pipe_ID',
-    'Latitude Start': 'Latitude_Start',
-    'Longitude Start': 'Longitude_Start',
-    'Latitude End': 'Latitude_End',
-    'Longitude End': 'Longitude_End'
-}, inplace=True)
+    for _, row in pipe_network_df.iterrows():
+        fig.add_trace(go.Scattermapbox(
+            lat=[row['Latitude Start'], row['Latitude End']],
+            lon=[row['Longitude Start'], row['Longitude End']],
+            mode='lines',
+            line=dict(width=2, color='blue'),
+            name=f"Pipe {row['Pipe ID']} (DMA {row['DMA_ID']})"
+        ))
     
     # Add pressure data
     fig.add_trace(go.Scattermapbox(
@@ -44,7 +51,7 @@ def plot_dma_pressure_map():
             lat=[row['Latitude']],
             lon=[row['Longitude']],
             mode='markers',
-            marker=dict(size=8, symbol='marker', color='cyan' if row['Asset Type'] == 'Valve' else 'red'),
+            marker=dict(size=8, symbol='circle', color='cyan' if row['Asset Type'] == 'Valve' else 'red'),
             text=row['Asset ID'],
             hoverinfo="text",
             name=row['Asset Type']
