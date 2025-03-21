@@ -49,7 +49,8 @@ def plot_dma_pressure_map():
             lon=[row['Longitude Start'], row['Longitude End']],
             mode='lines',
             line=dict(width=2, color='purple'),
-            hoverinfo='none'
+            hoverinfo='none',  # Remove hover information
+            showlegend=False   # Hide legend entries
         ))
     
     # Show assets
@@ -59,7 +60,8 @@ def plot_dma_pressure_map():
             lon=[row['Longitude']],
             mode='markers',
             marker=dict(size=10, symbol='marker', color='cyan' if row['Asset Type'] == 'Valve' else 'red'),
-            hoverinfo="none"
+            hoverinfo="none",
+            showlegend=False  # Hide legend entries
         ))
     
     st.plotly_chart(fig, use_container_width=True)
