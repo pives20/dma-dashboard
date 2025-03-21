@@ -16,17 +16,17 @@ from io import BytesIO
 from fpdf import FPDF
 import time
 
-# Load Data from backend storage
+# Load Data from CSV Files (No backend_data/ path)
 @st.cache_data
-def load_backend_data():
+def load_data():
     dma_df = pd.read_csv("dma_data.csv")
     pipe_network_df = pd.read_csv("pipe_network.csv")
     pressure_df = pd.read_csv("pressure_data.csv")
     assets_df = pd.read_csv("assets_data.csv")
     return dma_df, pipe_network_df, pressure_df, assets_df
 
-# Load all backend data
-dma_df, pipe_network_df, pressure_df, assets_df = load_backend_data()
+# Load CSV data
+dma_df, pipe_network_df, pressure_df, assets_df = load_data()
 
 # Function to generate a Pressure Heatmap with Time-Based Animation
 def plot_pressure_time_animation(pressure_df):
@@ -43,7 +43,7 @@ def plot_pressure_time_animation(pressure_df):
     else:
         st.write("Pressure animation cannot be generated due to missing data.")
 
-# Function to plot an interactive DMA Map with hexagonal bins, pressure overlay, and advanced asset visualization
+# Function to plot an interactive DMA Map with hexagonal bins, pressure overlay, and asset visualization
 def plot_dma_pressure_map(dma_df, pipe_network_df, pressure_df, assets_df):
     if dma_df is not None:
         fig = px.hexbin_mapbox(
@@ -54,7 +54,7 @@ def plot_dma_pressure_map(dma_df, pipe_network_df, pressure_df, assets_df):
         )
         fig.update_layout(mapbox_style="carto-darkmatter")
         
-        # Add pipe network if available
+        # Add pipe network
         if pipe_network_df is not None:
             for _, row in pipe_network_df.iterrows():
                 fig.add_trace(go.Scattermapbox(
@@ -65,7 +65,7 @@ def plot_dma_pressure_map(dma_df, pipe_network_df, pressure_df, assets_df):
                     name=f"Pipe {row['Pipe ID']}"
                 ))
         
-        # Add pressure data if available
+        # Add pressure data
         if pressure_df is not None:
             fig.add_trace(go.Scattermapbox(
                 lat=pressure_df['Latitude'],
@@ -121,4 +121,3 @@ st.write("### Pressure Variation Over Time")
 plot_pressure_time_animation(pressure_df)
 
 st.success("Analysis Complete!")
-
