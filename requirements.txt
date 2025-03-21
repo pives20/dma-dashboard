@@ -6,3 +6,6 @@ fpdf
 matplotlib
 seaborn
 scikit-learn
+geopandas
+shapely
+pyogrio
