@@ -17,17 +17,27 @@ dma_df.columns = dma_df.columns.str.strip().str.lower()
 pipe_network_df.columns = pipe_network_df.columns.str.strip().str.lower()
 assets_df.columns = assets_df.columns.str.strip().str.lower()
 
-# Drop NaN values from pipe_network_df for required columns
-required_pipe_columns = ["pipe id", "dma id", "length (m)", "diameter (mm)", "material"]
-existing_columns = [col for col in required_pipe_columns if col in pipe_network_df.columns]
-pipe_network_df.dropna(subset=existing_columns, inplace=True)
+# Convert latitude and longitude columns to numeric, forcing errors to NaN
+numeric_columns = ['latitude', 'longitude', 'latitude start', 'longitude start', 'latitude end', 'longitude end']
+for col in numeric_columns:
+    if col in pipe_network_df.columns:
+        pipe_network_df[col] = pd.to_numeric(pipe_network_df[col], errors='coerce')
+    if col in dma_df.columns:
+        dma_df[col] = pd.to_numeric(dma_df[col], errors='coerce')
+    if col in assets_df.columns:
+        assets_df[col] = pd.to_numeric(assets_df[col], errors='coerce')
+
+# Drop rows with NaN values in essential columns
+pipe_network_df.dropna(subset=['latitude start', 'longitude start', 'latitude end', 'longitude end'], inplace=True)
+dma_df.dropna(subset=['latitude', 'longitude'], inplace=True)
+assets_df.dropna(subset=['latitude', 'longitude'], inplace=True)
 
 # Function to estimate pressure based on pipe characteristics
 def estimate_pressure(pipe_network_df):
     material_factor = {"pvc": 1.0, "steel": 1.2, "copper": 1.1, "cast iron": 0.9}
     pipe_network_df["pressure"] = pipe_network_df.apply(
-        lambda row: (row["diameter (mm)"] * material_factor.get(row["material"].lower(), 1.0)) /
-                     (1 + row["length (m)"]) * 50, axis=1)
+        lambda row: (row["diameter (mm)"] * material_factor.get(row["material"].lower(), 1.0)) / 
+                     (1 + abs(row["latitude start"] - row["latitude end"])) * 50, axis=1)
     return pipe_network_df
 
 # Estimate pressure data
@@ -43,21 +53,48 @@ def validate_columns(df, required_columns, df_name):
     return True
 
 # Validate datasets
-valid_dma = validate_columns(dma_df, ['dma id'], "DMA Data")
+valid_dma = validate_columns(dma_df, ['dma id', 'latitude', 'longitude'], "DMA Data")
 valid_pipes = validate_columns(pipe_network_df, ['pipe id', 'dma id', 'length (m)', 'diameter (mm)', 'material', 'pressure'], "Pipe Network")
-valid_assets = validate_columns(assets_df, ['asset id', 'asset type'], "Assets Data")
+valid_assets = validate_columns(assets_df, ['asset id', 'asset type', 'latitude', 'longitude'], "Assets Data")
 
-# Function to plot an interactive DMA Map with estimated pressure overlay
+# Function to plot an interactive DMA Map with pressure overlay
 def plot_dma_pressure_map():
     if not (valid_dma and valid_pipes and valid_assets):
         st.error("❌ Cannot plot map due to missing columns. Check the errors above.")
         return
     
     fig = px.scatter_mapbox(
-        pipe_network_df, lat='dma id', lon='pressure', color='pressure',
+        pipe_network_df, lat='latitude start', lon='longitude start', color='pressure',
         size_max=10, zoom=12, height=900, width=1600, mapbox_style="carto-darkmatter",
         title="DMA Network Map with Estimated Pressure Overlay", color_continuous_scale="YlOrRd"
     )
+    
+    # Add pipe network
+    for _, row in pipe_network_df.iterrows():
+        fig.add_trace(go.Scattermapbox(
+            lat=[row['latitude start'], row['latitude end']],
+            lon=[row['longitude start'], row['longitude end']],
+            mode='lines',
+            line=dict(width=2, color='purple'),
+            hoverinfo='none',
+            showlegend=False
+        ))
+    
+    # Show assets
+    for _, row in assets_df.iterrows():
+        fig.add_trace(go.Scattermapbox(
+            lat=[row['latitude']],
+            lon=[row['longitude']],
+            mode='markers',
+            marker=dict(size=10, symbol='marker', color='cyan' if row['asset type'] == 'Valve' else 'red'),
+            hoverinfo="none",
+            showlegend=False
+        ))
+    
+    # Hide colorbar
+    for trace in fig.data:
+        if 'marker' in trace and 'color' in trace.marker:
+            trace.marker.showscale = False
     
     st.plotly_chart(fig, use_container_width=True)
 
