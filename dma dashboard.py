@@ -19,8 +19,8 @@ assets_df.columns = assets_df.columns.str.strip()
 def validate_columns(df, required_columns, df_name):
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
-        st.error(f"\u274C Missing columns in {df_name}: {missing_columns}")
-        st.write(f"\u2705 Available columns in {df_name}: {list(df.columns)}")
+        st.error(f"❌ Missing columns in {df_name}: {missing_columns}")
+        st.write(f"✅ Available columns in {df_name}: {list(df.columns)}")
         return False
     return True
 
@@ -33,7 +33,7 @@ valid_assets = validate_columns(assets_df, ['Asset ID', 'Asset Type', 'Latitude'
 # Function to plot an interactive DMA Map with pressure overlay
 def plot_dma_pressure_map():
     if not (valid_dma and valid_pipes and valid_pressure and valid_assets):
-        st.error("\u274C Cannot plot map due to missing columns. Check the errors above.")
+        st.error("❌ Cannot plot map due to missing columns. Check the errors above.")
         return
     
     fig = px.density_mapbox(
@@ -63,6 +63,11 @@ def plot_dma_pressure_map():
             hoverinfo="none",
             showlegend=False  # Hide legend entries
         ))
+    
+    # Hide colorbar
+    for trace in fig.data:
+        if 'marker' in trace and 'color' in trace.marker:
+            trace.marker.showscale = False
     
     st.plotly_chart(fig, use_container_width=True)
 
