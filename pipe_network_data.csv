@@ -1,4 +1,4 @@
-Pipe ID,DMA ID,Length (m),Diameter (mm),Material
+Pipe ID,DMA ID,Length (m),diameter (mm),material
 Pipe-1,DMA-5,446,150,Iron
 Pipe-2,DMA-8,178,100,PVC
 Pipe-3,DMA-10,185,150,Steel
