@@ -10,10 +10,10 @@ pressure_df = pd.read_csv("pressure_data.csv")
 assets_df = pd.read_csv("assets_data.csv")
 
 # Ensure column names are stripped of whitespace
-dma_df.columns = dma_df.columns.str.strip()
-pipe_network_df.columns = pipe_network_df.columns.str.strip()
-pressure_df.columns = pressure_df.columns.str.strip()
-assets_df.columns = assets_df.columns.str.strip()
+dma_df.columns = dma_df.columns.str.strip().str.lower()
+pipe_network_df.columns = pipe_network_df.columns.str.strip().str.lower()
+pressure_df.columns = pressure_df.columns.str.strip().str.lower()
+assets_df.columns = assets_df.columns.str.strip().str.lower()
 
 # Function to check required columns
 def validate_columns(df, required_columns, df_name):
@@ -25,10 +25,10 @@ def validate_columns(df, required_columns, df_name):
     return True
 
 # Validate all datasets
-valid_dma = validate_columns(dma_df, ['DMA ID', 'Latitude', 'Longitude'], "DMA Data")
-valid_pipes = validate_columns(pipe_network_df, ['Pipe ID', 'Latitude Start', 'Longitude Start', 'Latitude End', 'Longitude End', 'DMA_ID'], "Pipe Network")
-valid_pressure = validate_columns(pressure_df, ['DMA ID', 'Pressure', 'Latitude', 'Longitude'], "Pressure Data")
-valid_assets = validate_columns(assets_df, ['Asset ID', 'Asset Type', 'Latitude', 'Longitude'], "Assets Data")
+valid_dma = validate_columns(dma_df, ['dma id', 'latitude', 'longitude'], "DMA Data")
+valid_pipes = validate_columns(pipe_network_df, ['pipe id', 'latitude start', 'longitude start', 'latitude end', 'longitude end', 'dma_id'], "Pipe Network")
+valid_pressure = validate_columns(pressure_df, ['dma id', 'pressure', 'latitude', 'longitude'], "Pressure Data")
+valid_assets = validate_columns(assets_df, ['asset id', 'asset type', 'latitude', 'longitude'], "Assets Data")
 
 # Function to plot an interactive DMA Map with pressure overlay
 def plot_dma_pressure_map():
@@ -37,7 +37,7 @@ def plot_dma_pressure_map():
         return
     
     fig = px.density_mapbox(
-        pressure_df, lat='Latitude', lon='Longitude', z='Pressure',
+        pressure_df, lat='latitude', lon='longitude', z='pressure',
         radius=25, zoom=12, height=900, width=1600, mapbox_style="carto-darkmatter",
         title="DMA Network Map with Pressure Overlay", color_continuous_scale="YlOrRd"
     )
@@ -45,8 +45,8 @@ def plot_dma_pressure_map():
     # Add pipe network
     for _, row in pipe_network_df.iterrows():
         fig.add_trace(go.Scattermapbox(
-            lat=[row['Latitude Start'], row['Latitude End']],
-            lon=[row['Longitude Start'], row['Longitude End']],
+            lat=[row['latitude start'], row['latitude end']],
+            lon=[row['longitude start'], row['longitude end']],
             mode='lines',
             line=dict(width=2, color='purple'),
             hoverinfo='none',  # Remove hover information
@@ -56,10 +56,10 @@ def plot_dma_pressure_map():
     # Show assets
     for _, row in assets_df.iterrows():
         fig.add_trace(go.Scattermapbox(
-            lat=[row['Latitude']],
-            lon=[row['Longitude']],
+            lat=[row['latitude']],
+            lon=[row['longitude']],
             mode='markers',
-            marker=dict(size=10, symbol='marker', color='cyan' if row['Asset Type'] == 'Valve' else 'red'),
+            marker=dict(size=10, symbol='marker', color='cyan' if row['asset type'] == 'Valve' else 'red'),
             hoverinfo="none",
             showlegend=False  # Hide legend entries
         ))
