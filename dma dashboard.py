@@ -3,6 +3,8 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
+from shapely.geometry import Polygon, Point
+import geopandas as gpd
 
 # Set Streamlit page configuration at the top
 st.set_page_config(layout="wide")
@@ -12,89 +14,81 @@ dma_df = pd.read_csv("dma_data.csv")
 pipe_network_df = pd.read_csv("pipe_network_data.csv")
 assets_df = pd.read_csv("assets_data.csv")
 
-# Ensure column names are stripped of whitespace and converted to lowercase
+# Ensure column names are stripped of whitespace
 dma_df.columns = dma_df.columns.str.strip().str.lower()
 pipe_network_df.columns = pipe_network_df.columns.str.strip().str.lower()
 assets_df.columns = assets_df.columns.str.strip().str.lower()
 
-# Convert latitude and longitude columns to numeric, forcing errors to NaN
-numeric_columns = ['latitude', 'longitude', 'latitude start', 'longitude start', 'latitude end', 'longitude end']
-for col in numeric_columns:
-    if col in pipe_network_df.columns:
-        pipe_network_df[col] = pd.to_numeric(pipe_network_df[col], errors='coerce')
-    if col in dma_df.columns:
-        dma_df[col] = pd.to_numeric(dma_df[col], errors='coerce')
-    if col in assets_df.columns:
-        assets_df[col] = pd.to_numeric(assets_df[col], errors='coerce')
+# Convert DMAs into polygons
+def create_dma_polygons(dma_df):
+    dma_polygons = {}
+    for dma_id in dma_df["dma id"].unique():
+        dma_points = dma_df[dma_df["dma id"] == dma_id][["latitude", "longitude"]].values
+        if len(dma_points) > 2:
+            dma_polygons[dma_id] = Polygon(dma_points)
+    return dma_polygons
 
-# Drop rows with NaN values in essential columns
-pipe_network_df.dropna(subset=['latitude start', 'longitude start', 'latitude end', 'longitude end'], inplace=True)
-dma_df.dropna(subset=['latitude', 'longitude'], inplace=True)
-assets_df.dropna(subset=['latitude', 'longitude'], inplace=True)
+dma_polygons = create_dma_polygons(dma_df)
+
+# Assign pipes and assets to DMAs
+pipe_network_df["dma id"] = pipe_network_df.apply(lambda row: next((dma_id for dma_id, poly in dma_polygons.items() if poly.contains(Point(row["latitude"], row["longitude"]))), None), axis=1)
+assets_df["dma id"] = assets_df.apply(lambda row: next((dma_id for dma_id, poly in dma_polygons.items() if poly.contains(Point(row["latitude"], row["longitude"]))), None), axis=1)
 
 # Function to estimate pressure based on pipe characteristics
 def estimate_pressure(pipe_network_df):
-    material_factor = {"pvc": 1.0, "steel": 1.2, "copper": 1.1, "cast iron": 0.9}
+    material_factor = {"PVC": 1.0, "Steel": 1.2, "Copper": 1.1, "Cast Iron": 0.9}
     pipe_network_df["pressure"] = pipe_network_df.apply(
-        lambda row: (row["diameter (mm)"] * material_factor.get(row["material"].lower(), 1.0)) / 
-                     (1 + abs(row["latitude start"] - row["latitude end"])) * 50, axis=1)
+        lambda row: (row["diameter (mm)"] * material_factor.get(row["material"], 1.0)) / 100, axis=1)
     return pipe_network_df
 
 # Estimate pressure data
 pipe_network_df = estimate_pressure(pipe_network_df)
 
-# Function to check required columns
-def validate_columns(df, required_columns, df_name):
-    missing_columns = [col for col in required_columns if col not in df.columns]
-    if missing_columns:
-        st.error(f"❌ Missing columns in {df_name}: {missing_columns}")
-        st.write(f"✅ Available columns in {df_name}: {list(df.columns)}")
-        return False
-    return True
-
-# Validate datasets
-valid_dma = validate_columns(dma_df, ['dma id', 'latitude', 'longitude'], "DMA Data")
-valid_pipes = validate_columns(pipe_network_df, ['pipe id', 'dma id', 'length (m)', 'diameter (mm)', 'material', 'pressure'], "Pipe Network")
-valid_assets = validate_columns(assets_df, ['asset id', 'asset type', 'latitude', 'longitude'], "Assets Data")
-
 # Function to plot an interactive DMA Map with pressure overlay
 def plot_dma_pressure_map():
-    if not (valid_dma and valid_pipes and valid_assets):
-        st.error("❌ Cannot plot map due to missing columns. Check the errors above.")
-        return
+    fig = go.Figure()
     
-    fig = px.scatter_mapbox(
-        pipe_network_df, lat='latitude start', lon='longitude start', color='pressure',
-        size_max=10, zoom=12, height=900, width=1600, mapbox_style="carto-darkmatter",
-        title="DMA Network Map with Estimated Pressure Overlay", color_continuous_scale="YlOrRd"
-    )
+    # Add DMA Polygons
+    for dma_id, polygon in dma_polygons.items():
+        x, y = polygon.exterior.xy
+        fig.add_trace(go.Scattermapbox(
+            lat=list(x), lon=list(y),
+            mode='lines', fill='toself',
+            fillcolor='rgba(0, 150, 255, 0.2)',
+            line=dict(width=1, color='blue'),
+            name=f"DMA {dma_id}"
+        ))
     
     # Add pipe network
     for _, row in pipe_network_df.iterrows():
         fig.add_trace(go.Scattermapbox(
-            lat=[row['latitude start'], row['latitude end']],
-            lon=[row['longitude start'], row['longitude end']],
+            lat=[row['latitude'], row['latitude'] + row['length (m)'] / 111000],
+            lon=[row['longitude'], row['longitude']],
             mode='lines',
-            line=dict(width=2, color='purple'),
-            hoverinfo='none',
-            showlegend=False
+            line=dict(width=2, color='blue'),
+            name=f"Pipe {row['pipe id']}"
         ))
     
-    # Show assets
+    # Add assets
     for _, row in assets_df.iterrows():
         fig.add_trace(go.Scattermapbox(
-            lat=[row['latitude']],
-            lon=[row['longitude']],
+            lat=[row['latitude']], lon=[row['longitude']],
             mode='markers',
-            marker=dict(size=10, symbol='marker', color='cyan' if row['asset type'] == 'Valve' else 'red'),
-            hoverinfo="none",
-            showlegend=False
+            marker=dict(size=10, color='red' if row['asset type'] == 'Hydrant' else 'cyan'),
+            name=row['asset type']
         ))
     
-    # Hide colorbar
-    for trace in fig.data:
-        if 'marker' in trace and 'color' in trace.marker:
-            trace.marker.showscale = False
+    # Configure map layout
+    fig.update_layout(
+        mapbox=dict(
+            style='carto-darkmatter',
+            zoom=13,
+            center=dict(lat=dma_df['latitude'].mean(), lon=dma_df['longitude'].mean())
+        ),
+        showlegend=False,
+        height=800,
+        margin=dict(l=0, r=0, t=0, b=0)
+    )
     
     st.plotly_chart(fig, use_container_width=True)
 
