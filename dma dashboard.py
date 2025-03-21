@@ -62,7 +62,7 @@ def plot_dma_pressure_map():
         lat=pressure_df['Latitude'],
         lon=pressure_df['Longitude'],
         mode='markers',
-        marker=dict(size=8, color=pressure_df['Pressure'], colorscale='YlOrRd', showscale=True),
+        marker=dict(size=8, color=pressure_df['Pressure'], colorscale='YlOrRd', showscale=True, colorbar=dict(x=0.85)),
         text=pressure_df['Pressure'],
         name="Pressure Levels"
     ))
@@ -83,7 +83,7 @@ def plot_dma_pressure_map():
             name=row['Asset Type']
         ))
     
-    st.plotly_chart(fig)
+    st.plotly_chart(fig, use_container_width=True)
 
 # Streamlit App
 st.title("DMA Leakage Reduction AI Dashboard")
