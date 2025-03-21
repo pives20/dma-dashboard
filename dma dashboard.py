@@ -3,6 +3,9 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
+# Set Streamlit page configuration at the top
+st.set_page_config(layout="wide")
+
 # Load data from CSV files
 dma_df = pd.read_csv("dma_data.csv")
 pipe_network_df = pd.read_csv("pipe_network_data.csv")
@@ -72,7 +75,6 @@ def plot_dma_pressure_map():
     st.plotly_chart(fig, use_container_width=True)
 
 # Streamlit App
-st.set_page_config(layout="wide")
 st.title("DMA Leakage Reduction AI Dashboard")
 
 # Generate and display the DMA map with pressure overlay
