@@ -15,8 +15,27 @@ pipe_network_df.columns = pipe_network_df.columns.str.strip()
 pressure_df.columns = pressure_df.columns.str.strip()
 assets_df.columns = assets_df.columns.str.strip()
 
+# Function to check required columns
+def validate_columns(df, required_columns, df_name):
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    if missing_columns:
+        st.error(f"❌ Missing columns in {df_name}: {missing_columns}")
+        st.write(f"✅ Available columns in {df_name}: {list(df.columns)}")
+        return False
+    return True
+
+# Validate all datasets
+valid_dma = validate_columns(dma_df, ['DMA ID', 'Latitude', 'Longitude'], "DMA Data")
+valid_pipes = validate_columns(pipe_network_df, ['Pipe ID', 'Latitude Start', 'Longitude Start', 'Latitude End', 'Longitude End', 'DMA_ID'], "Pipe Network")
+valid_pressure = validate_columns(pressure_df, ['DMA ID', 'Pressure', 'Latitude', 'Longitude'], "Pressure Data")
+valid_assets = validate_columns(assets_df, ['Asset ID', 'Asset Type', 'Latitude', 'Longitude'], "Assets Data")
+
 # Function to plot an interactive DMA Map with pressure overlay
 def plot_dma_pressure_map():
+    if not (valid_dma and valid_pipes and valid_pressure and valid_assets):
+        st.error("❌ Cannot plot map due to missing columns. Check the errors above.")
+        return
+    
     fig = px.scatter_mapbox(
         dma_df, lat='Latitude', lon='Longitude', color='DMA ID',
         size_max=10, zoom=12, height=600,
