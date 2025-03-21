@@ -1,87 +1,95 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 
-# Load Data from backend storage
-@st.cache_data
-def load_backend_data():
-    dma_df = pd.read_csv("dma_data.csv")
-    pipe_network_df = pd.read_csv("pipe_network_data.csv")
-    pressure_df = pd.read_csv("pressure_data.csv")
-    assets_df = pd.read_csv("assets_data.csv")
-    return dma_df, pipe_network_df, pressure_df, assets_df
+# Sample Mock Data for DMA Visualization
+dma_data = {
+    'Latitude': [50.3763, 50.3772, 50.3785],
+    'Longitude': [-4.1438, -4.1425, -4.1412],
+    'Age (years)': [10, 15, 8]
+}
+dma_df = pd.DataFrame(dma_data)
 
-# Load all backend data
-dma_df, pipe_network_df, pressure_df, assets_df = load_backend_data()
+pipe_network_data = {
+    'Latitude Start': [50.3760, 50.3770],
+    'Longitude Start': [-4.1440, -4.1430],
+    'Latitude End': [50.3775, 50.3780],
+    'Longitude End': [-4.1420, -4.1410],
+    'Pipe ID': ['P001', 'P002']
+}
+pipe_network_df = pd.DataFrame(pipe_network_data)
+
+pressure_data = {
+    'Latitude': [50.3765, 50.3775, 50.3782],
+    'Longitude': [-4.1435, -4.1422, -4.1410],
+    'Pressure': [50, 48, 52]
+}
+pressure_df = pd.DataFrame(pressure_data)
+
+assets_data = {
+    'Latitude': [50.3768, 50.3779],
+    'Longitude': [-4.1433, -4.1421],
+    'Asset Type': ['Valve', 'Hydrant'],
+    'Asset ID': ['V001', 'H001'],
+    'Status': ['Open', 'Available'],
+    'Diameter': [150, 200]
+}
+assets_df = pd.DataFrame(assets_data)
 
 # Function to plot an interactive DMA Map with pressure overlay
-def plot_dma_pressure_map(dma_df, pipe_network_df, pressure_df, assets_df):
-    if dma_df is not None:
-        fig = px.density_mapbox(
-            dma_df, lat='Latitude', lon='Longitude', z='Age (years)',
-            radius=15, zoom=12, height=600,
-            mapbox_style="carto-darkmatter",
-            title="DMA Network Map with Pressure Overlay",
-            color_continuous_scale="YlOrRd"
-        )
-        
-        # Add pipe network if available
-        if pipe_network_df is not None:
-            for _, row in pipe_network_df.iterrows():
-                fig.add_trace(go.Scattermapbox(
-                    lat=[row['Latitude Start'], row['Latitude End']],
-                    lon=[row['Longitude Start'], row['Longitude End']],
-                    mode='lines',
-                    line=dict(width=2, color='blue'),
-                    name=f"Pipe {row['Pipe ID']}"
-                ))
-        
-        # Add pressure data if available
-        if pressure_df is not None:
-            fig.add_trace(go.Scattermapbox(
-                lat=pressure_df['Latitude'],
-                lon=pressure_df['Longitude'],
-                mode='markers',
-                marker=dict(size=8, color=pressure_df['Pressure'], colorscale='YlOrRd', showscale=True),
-                text=pressure_df['Pressure'],
-                name="Pressure Levels"
-            ))
-        
-        # Show assets with interactive click events
-        if assets_df is not None:
-            asset_types = assets_df['Asset Type'].unique().tolist()
-            selected_assets = st.multiselect("Select Asset Types to Display:", asset_types, default=asset_types)
-            filtered_assets = assets_df[assets_df['Asset Type'].isin(selected_assets)]
-            
-            for asset_type in selected_assets:
-                asset_subset = filtered_assets[filtered_assets['Asset Type'] == asset_type]
-                fig.add_trace(go.Scattermapbox(
-                    lat=asset_subset['Latitude'],
-                    lon=asset_subset['Longitude'],
-                    mode='markers',
-                    marker=dict(
-                        size=12,
-                        symbol='marker',
-                        color='cyan' if asset_type == 'Valve' else 'red' if asset_type == 'Hydrant' else 'purple'
-                    ),
-                    text=asset_subset['Asset ID'],
-                    customdata=asset_subset[['Asset ID', 'Status', 'Diameter']],
-                    hovertemplate="<b>%{customdata[0]}</b><br>Status: %{customdata[1]}<br>Diameter: %{customdata[2]} mm<extra></extra>",
-                    name=asset_type
-                ))
-        
-        st.plotly_chart(fig)
-        
-    else:
-        st.write("No DMA data available for mapping.")
+def plot_dma_pressure_map():
+    fig = px.density_mapbox(
+        dma_df, lat='Latitude', lon='Longitude', z='Age (years)',
+        radius=15, zoom=12, height=600,
+        mapbox_style="carto-darkmatter",
+        title="DMA Network Map with Pressure Overlay",
+        color_continuous_scale="YlOrRd"
+    )
+    
+    # Add pipe network if available
+    for _, row in pipe_network_df.iterrows():
+        fig.add_trace(go.Scattermapbox(
+            lat=[row['Latitude Start'], row['Latitude End']],
+            lon=[row['Longitude Start'], row['Longitude End']],
+            mode='lines',
+            line=dict(width=2, color='blue'),
+            name=f"Pipe {row['Pipe ID']}"
+        ))
+    
+    # Add pressure data
+    fig.add_trace(go.Scattermapbox(
+        lat=pressure_df['Latitude'],
+        lon=pressure_df['Longitude'],
+        mode='markers',
+        marker=dict(size=8, color=pressure_df['Pressure'], colorscale='YlOrRd', showscale=True),
+        text=pressure_df['Pressure'],
+        name="Pressure Levels"
+    ))
+    
+    # Show assets with interactive click events
+    for _, row in assets_df.iterrows():
+        fig.add_trace(go.Scattermapbox(
+            lat=[row['Latitude']],
+            lon=[row['Longitude']],
+            mode='markers',
+            marker=dict(
+                size=12,
+                symbol='marker',
+                color='cyan' if row['Asset Type'] == 'Valve' else 'red'
+            ),
+            text=row['Asset ID'],
+            hoverinfo="text",
+            name=row['Asset Type']
+        ))
+    
+    st.plotly_chart(fig)
 
 # Streamlit App
 st.title("DMA Leakage Reduction AI Dashboard")
 
 # Generate and display the DMA map with pressure overlay
 st.write("### DMA Network Map with Pressure Overlay")
-plot_dma_pressure_map(dma_df, pipe_network_df, pressure_df, assets_df)
+plot_dma_pressure_map()
 
 st.success("Analysis Complete!")
