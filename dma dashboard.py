@@ -19,10 +19,10 @@ import time
 # Load Data from backend storage
 @st.cache_data
 def load_backend_data():
-    dma_df = pd.read_csv("backend_data/dma_data.csv")
-    pipe_network_df = pd.read_csv("backend_data/pipe_network.csv")
-    pressure_df = pd.read_csv("backend_data/pressure_data.csv")
-    assets_df = pd.read_csv("backend_data/assets_data.csv")
+    dma_df = pd.read_csv("dma_data.csv")
+    pipe_network_df = pd.read_csv("pipe_network.csv")
+    pressure_df = pd.read_csv("pressure_data.csv")
+    assets_df = pd.read_csv("assets_data.csv")
     return dma_df, pipe_network_df, pressure_df, assets_df
 
 # Load all backend data
