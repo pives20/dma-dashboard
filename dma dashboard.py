@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 
 # Load data from CSV files
 dma_df = pd.read_csv("dma_data.csv")
-pipe_network_df = pd.read_csv("pipe_network_data.csv")
+pipe_network_df = pd.read_csv("pipe_network.csv")
 pressure_df = pd.read_csv("pressure_data.csv")
 assets_df = pd.read_csv("assets_data.csv")
 
