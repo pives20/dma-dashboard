@@ -25,8 +25,8 @@ def plot_dma_pressure_map():
             lat=[row['Latitude Start'], row['Latitude End']],
             lon=[row['Longitude Start'], row['Longitude End']],
             mode='lines',
-            line=dict(width=1.5, color='blue'),
-            name=f"Pipe {row['Pipe ID']}"
+            line=dict(width=2, color='blue'),
+            name=f"Pipe {row['Pipe ID']} (DMA {row['DMA_ID']})"
         ))
     
     # Add pressure data
