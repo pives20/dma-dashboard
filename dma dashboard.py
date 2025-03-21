@@ -12,22 +12,24 @@ dma_df = pd.read_csv("dma_data.csv")
 pipe_network_df = pd.read_csv("pipe_network_data.csv")
 assets_df = pd.read_csv("assets_data.csv")
 
-# Ensure column names are stripped of whitespace
+# Ensure column names are stripped of whitespace and converted to lowercase
 dma_df.columns = dma_df.columns.str.strip().str.lower()
 pipe_network_df.columns = pipe_network_df.columns.str.strip().str.lower()
 assets_df.columns = assets_df.columns.str.strip().str.lower()
 
-# Convert necessary columns to numeric values
-pipe_network_df["diameter (mm)"] = pd.to_numeric(pipe_network_df["diameter (mm)"], errors='coerce')
-pipe_network_df["length (m)"] = pd.to_numeric(pipe_network_df["length (m)"], errors='coerce')
+# Convert necessary columns to numeric
+dma_df[['latitude', 'longitude']] = dma_df[['latitude', 'longitude']].apply(pd.to_numeric, errors='coerce')
+pipe_network_df[['diameter (mm)', 'length (m)']] = pipe_network_df[['diameter (mm)', 'length (m)']].apply(pd.to_numeric, errors='coerce')
+
+# Drop NaN values in key columns
+dma_df = dma_df.dropna()
+pipe_network_df = pipe_network_df.dropna()
 
 # Function to estimate pressure based on pipe characteristics
 def estimate_pressure(pipe_network_df):
     material_factor = {"PVC": 1.0, "Steel": 1.2, "Copper": 1.1, "Cast Iron": 0.9}
-    pipe_network_df = pipe_network_df.dropna(subset=["diameter (mm)", "length (m)", "material"])
-    
     pipe_network_df["pressure"] = pipe_network_df.apply(
-        lambda row: (row["diameter (mm)"] * material_factor.get(row["material"], 1.0)) / 
+        lambda row: (row["diameter (mm)"] * material_factor.get(row["material"], 1.0)) /
                      (1 + row["length (m)"]) * 50, axis=1)
     return pipe_network_df
 
@@ -54,21 +56,17 @@ def plot_dma_pressure_map():
         st.error("❌ Cannot plot map due to missing columns. Check the errors above.")
         return
     
-    if pipe_network_df.empty:
-        st.warning("⚠ No valid pipe data available for plotting.")
-        return
-    
-    fig = px.density_mapbox(
-        pipe_network_df, lat='dma id', lon='pressure', z='pressure',
-        radius=25, zoom=12, height=900, width=1600, mapbox_style="carto-darkmatter",
+    fig = px.scatter_mapbox(
+        pipe_network_df, lat='latitude start', lon='longitude start', color='pressure',
+        size_max=10, zoom=12, height=900, width=1600, mapbox_style="carto-darkmatter",
         title="DMA Network Map with Estimated Pressure Overlay", color_continuous_scale="YlOrRd"
     )
     
     # Add pipe network
     for _, row in pipe_network_df.iterrows():
         fig.add_trace(go.Scattermapbox(
-            lat=[row['dma id']],
-            lon=[row['pressure']],
+            lat=[row.get('latitude start', np.nan), row.get('latitude end', np.nan)],
+            lon=[row.get('longitude start', np.nan), row.get('longitude end', np.nan)],
             mode='lines',
             line=dict(width=2, color='purple'),
             hoverinfo='none',
