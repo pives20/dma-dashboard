@@ -17,6 +17,16 @@ dma_df.columns = dma_df.columns.str.strip().str.lower()
 pipe_network_df.columns = pipe_network_df.columns.str.strip().str.lower()
 assets_df.columns = assets_df.columns.str.strip().str.lower()
 
+# Debugging: Print available columns
+st.write("Available columns in pipe_network_df:", list(pipe_network_df.columns))
+
+# Ensure necessary columns exist and fill missing values
+if 'diameter' not in pipe_network_df.columns or 'material' not in pipe_network_df.columns:
+    st.error("Missing required columns in pipe_network_data.csv. Please check the file.")
+else:
+    pipe_network_df['diameter'] = pipe_network_df['diameter'].fillna(100)  # Default diameter value
+    pipe_network_df['material'] = pipe_network_df['material'].fillna("PVC")  # Default material
+
 # Function to estimate pressure based on pipe characteristics
 def estimate_pressure(pipe_network_df):
     material_factor = {"PVC": 1.0, "Steel": 1.2, "Copper": 1.1, "Cast Iron": 0.9}
