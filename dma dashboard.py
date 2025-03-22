@@ -12,17 +12,19 @@ dma_df = pd.read_csv("dma_data.csv")
 pipe_network_df = pd.read_csv("pipe_network_data.csv")
 assets_df = pd.read_csv("assets_data.csv")
 
-# Ensure column names match exactly
-dma_df.columns = dma_df.columns.str.strip()
-pipe_network_df.columns = pipe_network_df.columns.str.strip()
-assets_df.columns = assets_df.columns.str.strip()
+# Ensure column names are stripped of whitespace and lowercased
+dma_df.columns = dma_df.columns.str.strip().str.lower()
+pipe_network_df.columns = pipe_network_df.columns.str.strip().str.lower()
+assets_df.columns = assets_df.columns.str.strip().str.lower()
 
 # Function to estimate pressure based on pipe characteristics
 def estimate_pressure(pipe_network_df):
-    material_factor = {"PVC": 1.0, "Steel": 1.2, "Copper": 1.1, "Cast Iron": 0.9}
-    pipe_network_df["Pressure"] = pipe_network_df.apply(
-        lambda row: (row["diameter (mm)"] * material_factor.get(row["material"], 1.0)) /
-                     (1 + abs(row["Latitude"] - (row["Latitude"] + row["Length (m)"] / 111000))) * 50, axis=1)
+    material_factor = {"pvc": 1.0, "steel": 1.2, "copper": 1.1, "cast iron": 0.9}
+    pipe_network_df["pressure"] = pipe_network_df.apply(
+        lambda row: (row["diameter (mm)"] * material_factor.get(row["material"].lower(), 1.0)) /
+                     (1 + abs(row["latitude"] - (row["latitude"] + row["length (m)"] / 111000))) * 50,
+        axis=1
+    )
     return pipe_network_df
 
 # Estimate pressure data
@@ -38,49 +40,45 @@ def validate_columns(df, required_columns, df_name):
     return True
 
 # Validate datasets
-valid_dma = validate_columns(dma_df, ['Latitude', 'Longitude'], "DMA Data")
-valid_pipes = validate_columns(pipe_network_df, ['pipe id', 'dma id', 'Length (m)', 'diameter (mm)', 'material', 'Pressure', 'Latitude', 'Longitude'], "Pipe Network")
-valid_assets = validate_columns(assets_df, ['asset id', 'asset type', 'Latitude', 'Longitude'], "Assets Data")
+valid_dma = validate_columns(dma_df, ['dma id', 'latitude', 'longitude'], "DMA Data")
+valid_pipes = validate_columns(pipe_network_df, ['pipe id', 'dma id', 'length (m)', 'diameter (mm)', 'material', 'latitude', 'longitude', 'pressure'], "Pipe Network")
+valid_assets = validate_columns(assets_df, ['asset id', 'asset type', 'latitude', 'longitude'], "Assets Data")
 
 # Function to plot an interactive DMA Map with pressure overlay
 def plot_dma_pressure_map():
     if not (valid_dma and valid_pipes and valid_assets):
         st.error("❌ Cannot plot map due to missing columns. Check the errors above.")
         return
-    
+
     fig = px.scatter_mapbox(
-        pipe_network_df, lat='Latitude', lon='Longitude', color='Pressure',
-        size_max=10, zoom=12, height=900, width=1600, mapbox_style="carto-darkmatter",
-        title="DMA Network Map with Estimated Pressure Overlay", color_continuous_scale="YlOrRd"
+        pipe_network_df, lat='latitude', lon='longitude', color='pressure',
+        size_max=10, zoom=13, height=800,
+        mapbox_style="carto-darkmatter",
+        color_continuous_scale="YlOrRd"
     )
-    
-    # Add pipe network
+
+    # Add pipe lines
     for _, row in pipe_network_df.iterrows():
+        end_lat = row['latitude'] + row['length (m)'] / 111000
         fig.add_trace(go.Scattermapbox(
-            lat=[row['Latitude'], row['Latitude'] + row['Length (m)'] / 111000],
-            lon=[row['Longitude'], row['Longitude']],
+            lat=[row['latitude'], end_lat],
+            lon=[row['longitude'], row['longitude']],
             mode='lines',
-            line=dict(width=2, color='purple'),
-            hoverinfo='none',
+            line=dict(width=2, color='blue'),
             showlegend=False
         ))
-    
+
     # Show assets
     for _, row in assets_df.iterrows():
         fig.add_trace(go.Scattermapbox(
-            lat=[row['Latitude']],
-            lon=[row['Longitude']],
+            lat=[row['latitude']],
+            lon=[row['longitude']],
             mode='markers',
-            marker=dict(size=10, symbol='marker', color='cyan' if row['asset type'] == 'Valve' else 'red'),
+            marker=dict(size=10, symbol='marker', color='cyan' if row['asset type'].lower() == 'valve' else 'red'),
             hoverinfo="none",
             showlegend=False
         ))
-    
-    # Hide colorbar
-    for trace in fig.data:
-        if 'marker' in trace and 'color' in trace.marker:
-            trace.marker.showscale = False
-    
+
     st.plotly_chart(fig, use_container_width=True)
 
 # Streamlit App
