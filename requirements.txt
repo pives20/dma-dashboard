@@ -1,11 +1,6 @@
 streamlit
-pandas
-numpy
-plotly
-fpdf
-matplotlib
-seaborn
-scikit-learn
+wntr
 geopandas
 shapely
-pyogrio
+pydeck
+...
