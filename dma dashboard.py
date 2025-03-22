@@ -18,14 +18,14 @@ pipe_network_df.columns = pipe_network_df.columns.str.strip().str.lower()
 assets_df.columns = assets_df.columns.str.strip().str.lower()
 
 # Function to estimate pressure based on pipe characteristics
-def estimate_pressure(pipe_network_df):
+def estimate_pressure(df):
     material_factor = {"pvc": 1.0, "steel": 1.2, "copper": 1.1, "cast iron": 0.9}
-    pipe_network_df["pressure"] = pipe_network_df.apply(
+    df["pressure"] = df.apply(
         lambda row: (row["diameter (mm)"] * material_factor.get(row["material"].lower(), 1.0)) /
-                     (1 + abs(row["latitude"] - (row["latitude"] + row["length (m)"] / 111000))) * 50,
+                    (1 + row["length (m)"]) * 0.1,
         axis=1
     )
-    return pipe_network_df
+    return df
 
 # Estimate pressure data
 pipe_network_df = estimate_pressure(pipe_network_df)
@@ -40,8 +40,8 @@ def validate_columns(df, required_columns, df_name):
     return True
 
 # Validate datasets
-valid_dma = validate_columns(dma_df, ['dma id', 'latitude', 'longitude'], "DMA Data")
-valid_pipes = validate_columns(pipe_network_df, ['pipe id', 'dma id', 'length (m)', 'diameter (mm)', 'material', 'latitude', 'longitude', 'pressure'], "Pipe Network")
+valid_dma = validate_columns(dma_df, ['latitude', 'longitude'], "DMA Data")
+valid_pipes = validate_columns(pipe_network_df, ['pipe id', 'dma id', 'length (m)', 'diameter (mm)', 'material', 'pressure'], "Pipe Network")
 valid_assets = validate_columns(assets_df, ['asset id', 'asset type', 'latitude', 'longitude'], "Assets Data")
 
 # Function to plot an interactive DMA Map with pressure overlay
@@ -51,22 +51,24 @@ def plot_dma_pressure_map():
         return
 
     fig = px.scatter_mapbox(
-        pipe_network_df, lat='latitude', lon='longitude', color='pressure',
-        size_max=10, zoom=13, height=800,
+        dma_df, lat='latitude', lon='longitude',
+        zoom=12, height=900, width=1600,
         mapbox_style="carto-darkmatter",
-        color_continuous_scale="YlOrRd"
+        title="DMA Network Map with Estimated Pressure Overlay"
     )
 
-    # Add pipe lines
-    for _, row in pipe_network_df.iterrows():
-        end_lat = row['latitude'] + row['length (m)'] / 111000
-        fig.add_trace(go.Scattermapbox(
-            lat=[row['latitude'], end_lat],
-            lon=[row['longitude'], row['longitude']],
-            mode='lines',
-            line=dict(width=2, color='blue'),
-            showlegend=False
-        ))
+    # Add pipe network as straight lines from DMA locations (simplified for visualization)
+    for _, row in dma_df.iterrows():
+        pipes = pipe_network_df[pipe_network_df['dma id'] == row['dma id']]
+        for _, pipe in pipes.iterrows():
+            fig.add_trace(go.Scattermapbox(
+                lat=[row['latitude'], row['latitude']],
+                lon=[row['longitude'], row['longitude'] + pipe['length (m)'] / 111000],
+                mode='lines',
+                line=dict(width=2, color='purple'),
+                hoverinfo='none',
+                showlegend=False
+            ))
 
     # Show assets
     for _, row in assets_df.iterrows():
@@ -78,6 +80,11 @@ def plot_dma_pressure_map():
             hoverinfo="none",
             showlegend=False
         ))
+
+    # Hide colorbar if present
+    for trace in fig.data:
+        if hasattr(trace, 'marker') and hasattr(trace.marker, 'colorbar'):
+            trace.marker.showscale = False
 
     st.plotly_chart(fig, use_container_width=True)
 
