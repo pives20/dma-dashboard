@@ -2,52 +2,34 @@ import streamlit as st
 import wntr
 import geopandas as gpd
 import pandas as pd
-from shapely.geometry import Point, LineString
 import pydeck as pdk
+from shapely.geometry import Point, LineString
 import os
 
-#######################################
-# 1. Load the Network & Utility Funcs #
-#######################################
+############################################
+# 1) HELPER FUNCTIONS & DATA MODELING
+############################################
 
 @st.cache_data
-def load_network_model(inp_text: str):
-    """
-    Load the EPANET model from the raw `.inp` text (once),
-    return a WaterNetworkModel object.
-    """
+def load_epanet_model(inp_text: str):
+    """Loads an EPANET model from raw text (the .inp file contents)."""
     temp_inp_path = "temp_network.inp"
     with open(temp_inp_path, "w") as f:
         f.write(inp_text)
-
     wn = wntr.network.WaterNetworkModel(temp_inp_path)
     if os.path.exists(temp_inp_path):
         os.remove(temp_inp_path)
     return wn
 
-def close_valves_and_run_sim(wn_original, valves_to_close):
+def run_simulation(wn: wntr.network.WaterNetworkModel):
     """
-    1) Copy the original network.
-    2) Close the selected valves (or pipes if you prefer).
-    3) Run a hydraulic simulation.
-    4) Return a dictionary of final pressures, demands, etc.
+    Run a hydraulic simulation on the given WaterNetworkModel,
+    returning final time-step results as dictionaries.
     """
-    # 1. Copy the model so we don't overwrite the original
-    wn_copy = wn_original.clone()
-
-    # 2. Close selected valves
-    # In EPANET/wntr, a valve is also a 'Link' object. Setting status to 'Closed' isolates it.
-    for v_name in valves_to_close:
-        if v_name in wn_copy.links:
-            link_obj = wn_copy.get_link(v_name)
-            # EPANET link status options: OPEN, CLOSED, CV (check valve), etc.
-            link_obj.status = wntr.network.LinkStatus.Closed
-
-    # 3. Run simulation
-    sim = wntr.sim.EpanetSimulator(wn_copy)
+    sim = wntr.sim.EpanetSimulator(wn)
     results = sim.run_sim()
 
-    # 4. Extract final time-step results
+    # Extract final time
     last_time = results.node["pressure"].index[-1]
     pressures = results.node["pressure"].loc[last_time].to_dict()
     demands   = results.node["demand"].loc[last_time].to_dict()
@@ -61,30 +43,20 @@ def close_valves_and_run_sim(wn_original, valves_to_close):
         "velocity":  velocity
     }
 
-
-def build_geodataframes(wn, results_dict, pressure_threshold=1.0):
+def build_geodataframes(wn, results_dict):
     """
-    Create GeoDataFrames for nodes and links based on final simulation results.
-    Mark nodes as 'is_disconnected' if their pressure < pressure_threshold.
+    Convert the WNTR model + results into GeoDataFrames (nodes, links).
     """
     node_data = []
     for node_name, node_obj in wn.nodes():
         x, y = node_obj.coordinates
         pressure = results_dict["pressures"].get(node_name, 0.0)
         demand   = results_dict["demands"].get(node_name, 0.0)
-        
-        # Mark disconnected if pressure is below threshold
-        is_disc = (pressure < pressure_threshold)
-
-        # If you track how many properties each node represents, 
-        # you could store that in the .inp or add it as a custom attribute
-        # For now, let's just store demand as a proxy
         node_data.append({
-            "node_id": node_name,
-            "geometry": Point(x, y),
-            "pressure": pressure,
-            "demand":   demand,
-            "is_disconnected": is_disc
+            "node_id":   node_name,
+            "pressure":  pressure,
+            "demand":    demand,
+            "geometry":  Point(x, y),
         })
     node_gdf = gpd.GeoDataFrame(node_data, crs="EPSG:4326")
 
@@ -94,182 +66,167 @@ def build_geodataframes(wn, results_dict, pressure_threshold=1.0):
         end_node   = wn.get_node(link_obj.end_node_name)
         x1, y1 = start_node.coordinates
         x2, y2 = end_node.coordinates
-
-        flow = results_dict["flows"].get(link_name, 0.0)
-        vel  = results_dict["velocity"].get(link_name, 0.0)
-        
         link_data.append({
-            "link_id": link_name,
-            "geometry": LineString([(x1, y1), (x2, y2)]),
-            "flow": flow,
-            "velocity": vel,
-            "status": str(link_obj.status)  # 'Open' or 'Closed'
+            "link_id":   link_name,
+            "flow":      results_dict["flows"].get(link_name, 0.0),
+            "velocity":  results_dict["velocity"].get(link_name, 0.0),
+            "geometry":  LineString([(x1, y1), (x2, y2)]),
         })
     link_gdf = gpd.GeoDataFrame(link_data, crs="EPSG:4326")
 
     return node_gdf, link_gdf
 
-
-def create_pydeck_layers(node_gdf, link_gdf):
+def create_map_layers(node_gdf, link_gdf):
     """
-    Generate Pydeck layers for nodes & links, coloring disconnected nodes in red.
+    Create Pydeck layers for interactive mapping.
     """
     node_df = node_gdf.copy()
     node_df["lon"] = node_df.geometry.x
     node_df["lat"] = node_df.geometry.y
 
-    # Color nodes: if disconnected -> red, else scaled by pressure
-    def node_color(row):
-        if row["is_disconnected"]:
-            return [255, 0, 0]  # Red
-        else:
-            # e.g. greenish color based on pressure
-            # scale pressure 0-10 -> 0-255, just as example
-            press = row["pressure"]
-            max_press = 50.0
-            scaled = min(press / max_press, 1.0)
-            return [0, int(255 * scaled), 50]
-
-    node_df["color"] = node_df.apply(node_color, axis=1)
-
-    # Convert link geometry to path
     link_records = []
     for idx, row in link_gdf.iterrows():
         coords = list(row.geometry.coords)
         link_coords = [[float(x), float(y)] for (x, y) in coords]
         link_records.append({
-            "link_id": row["link_id"],
-            "status": row["status"],
-            "flow": row["flow"],
-            "velocity": row["velocity"],
-            "path": link_coords
+            "link_id":   row["link_id"],
+            "flow":      row["flow"],
+            "velocity":  row["velocity"],
+            "path":      link_coords
         })
     link_df = pd.DataFrame(link_records)
-
-    # Color links: closed -> gray, open -> blue
-    def link_color(row):
-        if row["status"] == "LinkStatus.Closed":
-            return [100, 100, 100]
-        else:
-            return [0, 100, 255]
-
-    link_df["color"] = link_df.apply(link_color, axis=1)
 
     node_layer = pdk.Layer(
         "ScatterplotLayer",
         data=node_df,
-        pickable=True,
         get_position=["lon", "lat"],
-        get_radius=40,
-        get_fill_color="color",
-        tooltip=True,
+        get_radius=50,
+        get_fill_color=[0, 100, 255],
+        pickable=True,
     )
-
     link_layer = pdk.Layer(
         "PathLayer",
         data=link_df,
-        pickable=True,
         get_path="path",
-        get_color="color",
-        width_scale=2,
+        get_color=[200, 30, 0],
+        width_scale=1,
         width_min_pixels=2,
         get_width=5,
-        tooltip=True,
+        pickable=True,
     )
-
     return node_layer, link_layer
 
-
-########################
-# 2. Streamlit UI App  #
-########################
+############################################
+# 2) STREAMLIT APP
+############################################
 
 def main():
     st.set_page_config(layout="wide")
-    st.title("Valve Closure & Disconnected Properties Demo")
+    st.title("DMA Dashboard (EPANET + Historic Leak Data + Assets)")
 
     with st.sidebar:
-        st.header("1) Upload EPANET .inp")
-        uploaded_file = st.file_uploader("Upload .inp", type=["inp"])
-        st.write("---")
+        st.header("Upload EPANET .inp File")
+        epanet_file = st.file_uploader("EPANET .inp", type=["inp"])
 
-    if not uploaded_file:
-        st.info("Upload an EPANET file to begin.")
+        st.header("Upload DMA / Asset Data")
+        st.markdown("**Historic Leak Data:** (optional)")
+        leak_file = st.file_uploader("CSV/Excel with historic leaks", type=["csv", "xlsx"], key="leaks")
+
+        st.markdown("**DMA Details / Assets:** (optional)")
+        dma_file = st.file_uploader("CSV/Excel with DMA assets/pipes", type=["csv", "xlsx"], key="dma")
+
+        st.markdown("**Measured vs. Expected Flows:** (optional)")
+        flow_file = st.file_uploader("CSV/Excel with measured flows", type=["csv", "xlsx"], key="flows")
+
+    if not epanet_file:
+        st.info("Please upload an EPANET .inp file.")
         return
 
-    # Load the network once
-    inp_text = uploaded_file.read().decode("utf-8")
-    wn_original = load_network_model(inp_text)
-    
-    # Identify valves/links in the network 
-    # (some models might label 'VALVE' vs 'PIPE'. In EPANET, valves are special link types.)
-    valve_names = []
-    for link_name, link in wn_original.links():
-        if link.link_type in ['PRV','PSV','PBV','FCV','TCV','GPV']:  
-            valve_names.append(link_name)
-        # Or if you want to treat certain pipes as valves, or do user-defined categories
+    # 1) Load the EPANET model
+    with st.spinner("Loading EPANET model..."):
+        inp_text = epanet_file.read().decode("utf-8")
+        wn = load_epanet_model(inp_text)
 
-    with st.sidebar:
-        st.header("2) Select valves to close")
-        # If no official valves in the model, show all links
-        if not valve_names:
-            st.warning("No official valves found. Showing all links instead.")
-            valve_names = list(wn_original.links.keys())
-        valves_to_close = st.multiselect("Close these valves:", valve_names, default=[])
+    # 2) Run the simulation
+    with st.spinner("Running simulation..."):
+        results_dict = run_simulation(wn)
 
-        st.write("---")
-        st.header("3) Pressure threshold for 'disconnected'")
-        threshold = st.slider("Min Pressure to be considered 'served' (m)", 0.1, 5.0, 1.0, 0.1)
+    # 3) Build geodataframes for nodes & links
+    node_gdf, link_gdf = build_geodataframes(wn, results_dict)
 
-    # Now we run the simulation with chosen valves closed
-    results_dict = close_valves_and_run_sim(wn_original, valves_to_close)
+    # 4) Additional Data: Historic Leaks, DMA/Asset, Flow Comparisons
+    #    We'll store them in session_state or local variables just to show in the dashboard
+    if leak_file:
+        with st.spinner("Loading historic leak data..."):
+            df_leaks = load_user_data(leak_file)
+    else:
+        df_leaks = None
 
-    # Build GDFs
-    node_gdf, link_gdf = build_geodataframes(wn_original, results_dict, pressure_threshold=threshold)
+    if dma_file:
+        with st.spinner("Loading DMA asset data..."):
+            df_dma = load_user_data(dma_file)
+    else:
+        df_dma = None
 
-    # Count how many are disconnected
-    disconnected_nodes = node_gdf[node_gdf["is_disconnected"]]
-    num_disconnected = len(disconnected_nodes)
-    total_nodes = len(node_gdf)
+    if flow_file:
+        with st.spinner("Loading measured flow data..."):
+            df_flow = load_user_data(flow_file)
+    else:
+        df_flow = None
 
-    # Sum up demands in disconnected nodes as a measure of how many "properties" are cut off
-    # If you have a custom attribute, you'd sum that instead
-    total_demand_disc = disconnected_nodes["demand"].sum()
-    total_demand_all = node_gdf["demand"].sum()
-
-    # Metrics up top
+    # 5) Display Key Results / Summaries
+    st.subheader("Simulation Summary")
     col1, col2, col3 = st.columns(3)
-    col1.metric("Disconnected Nodes", f"{num_disconnected}/{total_nodes}")
-    col2.metric("Disconnected Demand (L/s)", f"{total_demand_disc:.2f}")
-    col3.metric("Valves Closed", f"{len(valves_to_close)}")
+    avg_pressure = node_gdf["pressure"].mean()
+    total_demand = node_gdf["demand"].sum()
+    avg_flow     = link_gdf["flow"].mean()
+    col1.metric("Avg Pressure (m)", f"{avg_pressure:.2f}")
+    col2.metric("Total Demand (L/s)", f"{total_demand:.2f}")
+    col3.metric("Avg Flow (L/s)", f"{avg_flow:.2f}")
 
-    st.write("Selected valves closed:", valves_to_close if valves_to_close else "None")
-
-    # 3. Show the map
-    node_layer, link_layer = create_pydeck_layers(node_gdf, link_gdf)
-    
+    # 6) Visualize the network with Pydeck
+    node_layer, link_layer = create_map_layers(node_gdf, link_gdf)
     avg_lon = node_gdf.geometry.x.mean()
     avg_lat = node_gdf.geometry.y.mean()
-    view_state = pdk.ViewState(
-        latitude=avg_lat,
-        longitude=avg_lon,
-        zoom=13,
-        pitch=0
-    )
-
-    deck_map = pdk.Deck(
-        layers=[link_layer, node_layer],
-        initial_view_state=view_state,
-        tooltip={"html": "<b>{node_id}</b> | Pressure: {pressure}", "style": {"color": "white"}},
-    )
-
+    view_state = pdk.ViewState(latitude=avg_lat, longitude=avg_lon, zoom=13, pitch=0)
+    deck_map = pdk.Deck(layers=[link_layer, node_layer], initial_view_state=view_state)
     st.pydeck_chart(deck_map, use_container_width=True)
 
-    # 4. Show data tables
-    with st.expander("Node Table"):
-        st.write(node_gdf.drop(columns="geometry"))
-    with st.expander("Link Table"):
-        st.write(link_gdf.drop(columns="geometry"))
+    # 7) Display user data (Historic leaks, DMA assets, etc.)
+    if df_leaks is not None:
+        st.subheader("Historic Leak Data")
+        st.dataframe(df_leaks)
+
+    if df_dma is not None:
+        st.subheader("DMA Asset Details")
+        st.dataframe(df_dma)
+
+    if df_flow is not None:
+        st.subheader("Measured vs. Expected Flow Data")
+        st.dataframe(df_flow)
+        # Potentially compare df_flow with your node/link_gdf to highlight mismatches
+
+    # 8) Show raw node/link data
+    with st.expander("Node Data"):
+        st.dataframe(node_gdf.drop(columns="geometry"))
+    with st.expander("Link Data"):
+        st.dataframe(link_gdf.drop(columns="geometry"))
+
+
+@st.cache_data
+def load_user_data(file):
+    """
+    Load CSV or Excel into a pandas DataFrame.
+    Adjust to your column naming conventions as needed.
+    """
+    file_name = file.name.lower()
+    if file_name.endswith(".csv"):
+        df = pd.read_csv(file)
+    elif file_name.endswith(".xlsx"):
+        df = pd.read_excel(file)
+    else:
+        df = pd.DataFrame()
+    return df
 
 
 if __name__ == "__main__":
