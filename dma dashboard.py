@@ -60,7 +60,7 @@ def build_gis_data(node_csv_path, pipe_csv_path):
         rec["geometry"] = geometry
         node_records.append(rec)
 
-    node_gdf = gpd.GeoDataFrame(node_records, crs="EPSG:4326")
+    node_gdf = gpd.GeoDataFrame(node_records, crs="EPSG:27700")
 
     node_map = { r["node_id"]: r.geometry for _, r in node_gdf.iterrows() }
     pipe_records = []
@@ -81,7 +81,7 @@ def build_gis_data(node_csv_path, pipe_csv_path):
         rec["geometry"] = line
         pipe_records.append(rec)
 
-    pipe_gdf = gpd.GeoDataFrame(pipe_records, crs="EPSG:4326")
+    pipe_gdf = gpd.GeoDataFrame(pipe_records, crs="EPSG:27700")
     return node_gdf, pipe_gdf
 
 def create_3d_elevation_layer(node_gdf):
