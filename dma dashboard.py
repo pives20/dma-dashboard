@@ -71,6 +71,7 @@ def create_3d_elevation_layer(node_gdf):
     data["lon"] = data.geometry.x
     data["lat"] = data.geometry.y
     data["elevation"] = data.get("elevation", 0)
+    data["pipe_id"] = ""
 
     max_elev = data["elevation"].max() or 1
     data["height"] = (data["elevation"] / max_elev) * 2000
@@ -100,9 +101,10 @@ def create_pipe_layer(pipe_gdf):
     data = pipe_gdf.copy()
 
     pipe_records = [{
-        "pipe_id": row.pipe_id,
+        "pipe_id": f"Pipe: {row.pipe_id}",
         "path": [[pt[0], pt[1]] for pt in row.geometry.coords],
-        "color": [0, 255, 255]
+        "color": [0, 255, 255],
+        "elevation": ""
     } for idx, row in data.iterrows()]
 
     return pdk.Layer(
@@ -139,14 +141,6 @@ def main():
             try:
                 node_gdf, pipe_gdf = build_gis_data(node_path, pipe_path)
 
-                with st.expander("Node Data"):
-                    st.dataframe(node_gdf.drop(columns="geometry").head(10))
-                with st.expander("Pipe Data"):
-                    st.dataframe(pipe_gdf.drop(columns="geometry").head(10))
-
-                elev_range = (node_gdf["elevation"].min(), node_gdf["elevation"].max())
-                st.sidebar.metric("Elevation Range (m)", f"{elev_range[0]} - {elev_range[1]}")
-
                 elev_layer = create_3d_elevation_layer(node_gdf)
                 pipe_layer = create_pipe_layer(pipe_gdf)
 
@@ -164,7 +158,7 @@ def main():
                     map_style="mapbox://styles/mapbox/dark-v10",
                     initial_view_state=view_state,
                     layers=[pipe_layer, elev_layer],
-                    tooltip={"html": "Elevation: {elevation} m | Pipe: {pipe_id}"}
+                    tooltip={"html": "{pipe_id}{elevation}", "style": {"color": "white", "font-size": "14px"}}
                 )
 
                 st.pydeck_chart(deck_map, use_container_width=True)
