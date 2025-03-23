@@ -71,11 +71,17 @@ def build_gis_data(node_csv_path, pipe_csv_path, asset_csv_path=None, original_c
     asset_gdf = None
     if asset_csv_path:
         df_assets = pd.read_csv(asset_csv_path)
-        asset_gdf = gpd.GeoDataFrame(
-            df_assets,
-            geometry=gpd.points_from_xy(df_assets.XCoord, df_assets.YCoord),
-            crs=original_crs
-        ).to_crs("EPSG:4326")
+        coord_cols = [('XCoord', 'YCoord'), ('Longitude', 'Latitude'), ('Easting', 'Northing'), ('lon', 'lat')]
+        for x_col, y_col in coord_cols:
+            if x_col in df_assets.columns and y_col in df_assets.columns:
+                asset_gdf = gpd.GeoDataFrame(
+                    df_assets,
+                    geometry=gpd.points_from_xy(df_assets[x_col], df_assets[y_col]),
+                    crs=original_crs
+                ).to_crs("EPSG:4326")
+                break
+        else:
+            raise ValueError("Asset CSV missing coordinate columns (e.g., XCoord, YCoord or Longitude, Latitude)")
 
     return node_gdf, pipe_gdf, asset_gdf
 
