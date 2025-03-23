@@ -29,7 +29,7 @@ def build_gis_data(node_csv, pipe_csv, leak_csv, asset_csv=None, original_crs="E
     for _, row in df_pipes.iterrows():
         start_node = node_map.get(str(row["StartID"]))
         end_node = node_map.get(str(row["EndID"]))
-        if start_node and end_node:
+        if start_node is not None and end_node is not None:
             pipe_records.append({
                 "pipe_id": row["PipeID"],
                 "geometry": LineString([start_node.geometry, end_node.geometry]),
