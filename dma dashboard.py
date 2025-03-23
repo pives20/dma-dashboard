@@ -122,4 +122,24 @@ def main():
     st.title("3D DMA Elevation, Pipe, Asset & Leak Visualization")
 
     node_csv = st.file_uploader("Upload Node CSV", type=["csv"], key="node_csv")
-    pipe_csv = st.file_uploader("Upload Pipe CSV
+    pipe_csv = st.file_uploader("Upload Pipe CSV", type=["csv"], key="pipe_csv")
+    asset_csv = st.file_uploader("Upload Asset CSV (Valves, Hydrants, etc.)", type=["csv"], key="asset_csv")
+    leak_csv = st.file_uploader("Upload Leak CSV (Historic Leak Locations)", type=["csv"], key="leak_csv")
+
+    if st.button("Render Map"):
+        if not node_csv or not pipe_csv:
+            st.error("Please upload Node and Pipe CSV files.")
+            return
+
+        tmp_dir = tempfile.mkdtemp()
+        node_path = save_uploaded_file(node_csv, tmp_dir)
+        pipe_path = save_uploaded_file(pipe_csv, tmp_dir)
+        asset_path = save_uploaded_file(asset_csv, tmp_dir) if asset_csv else None
+        leak_path = save_uploaded_file(leak_csv, tmp_dir) if leak_csv else None
+
+        with st.spinner("Building map..."):
+            try:
+                node_gdf, pipe_gdf, asset_gdf, leak_gdf = build_gis_data(node_path, pipe_path, asset_path, leak_path)
+
+                layers = [create_pipe_layer(pipe_gdf)]
+                if
