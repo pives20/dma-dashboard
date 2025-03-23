@@ -42,7 +42,12 @@ def build_gis_data(node_csv_path, pipe_csv_path, asset_csv_path=None, leak_csv_p
 
     if leak_csv_path:
         df_leaks = pd.read_csv(leak_csv_path)
-        leak_gdf = gpd.GeoDataFrame(df_leaks.dropna(subset=['XCoord', 'YCoord']), geometry=gpd.points_from_xy(df_leaks.XCoord, df_leaks.YCoord), crs=original_crs).to_crs("EPSG:4326")
+        df_leaks_clean = df_leaks.dropna(subset=['XCoord', 'YCoord'])
+        leak_gdf = gpd.GeoDataFrame(
+            df_leaks_clean,
+            geometry=gpd.points_from_xy(df_leaks_clean['XCoord'], df_leaks_clean['YCoord']),
+            crs=original_crs
+        ).to_crs("EPSG:4326")
 
     return node_gdf, pipe_gdf, asset_gdf, leak_gdf
 
