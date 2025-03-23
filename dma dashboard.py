@@ -34,7 +34,7 @@ def save_uploaded_file(uploaded_file, directory):
         f.write(uploaded_file.read())
     return file_path
 
-def build_gis_data(node_csv_path, pipe_csv_path, original_crs="EPSG:27700"):
+def build_gis_data(node_csv_path, pipe_csv_path, asset_csv_path=None, original_crs="EPSG:27700"):
     df_nodes = pd.read_csv(node_csv_path)
     df_pipes = pd.read_csv(pipe_csv_path)
 
@@ -67,7 +67,17 @@ def build_gis_data(node_csv_path, pipe_csv_path, original_crs="EPSG:27700"):
         })
 
     pipe_gdf = gpd.GeoDataFrame(pipe_records, crs="EPSG:4326")
-    return node_gdf, pipe_gdf
+
+    asset_gdf = None
+    if asset_csv_path:
+        df_assets = pd.read_csv(asset_csv_path)
+        asset_gdf = gpd.GeoDataFrame(
+            df_assets,
+            geometry=gpd.points_from_xy(df_assets.XCoord, df_assets.YCoord),
+            crs=original_crs
+        ).to_crs("EPSG:4326")
+
+    return node_gdf, pipe_gdf, asset_gdf
 
 def create_pipe_layer(pipe_gdf):
     data = pipe_gdf.copy()
@@ -89,31 +99,52 @@ def create_pipe_layer(pipe_gdf):
         pickable=True
     )
 
+def create_asset_layer(asset_gdf):
+    data = asset_gdf.copy()
+    data["lon"] = data.geometry.x
+    data["lat"] = data.geometry.y
+
+    return pdk.Layer(
+        "ScatterplotLayer",
+        data=data,
+        get_position=["lon", "lat"],
+        get_fill_color=[255, 0, 0],
+        get_radius=10,
+        pickable=True
+    )
+
 #############################
 # 4) STREAMLIT APP
 #############################
 def main():
-    st.title("3D DMA Elevation & Pipe Visualization")
+    st.title("3D DMA Elevation, Pipe & Asset Visualization")
 
     st.sidebar.header("Map Settings")
 
     node_csv = st.file_uploader("Upload Node CSV", type=["csv"], key="node_csv")
     pipe_csv = st.file_uploader("Upload Pipe CSV", type=["csv"], key="pipe_csv")
+    asset_csv = st.file_uploader("Upload Asset CSV (Valves, Hydrants, etc.)", type=["csv"], key="asset_csv")
 
     if st.button("Render Map"):
         if not node_csv or not pipe_csv:
-            st.error("Please upload both CSV files.")
+            st.error("Please upload Node and Pipe CSV files.")
             return
 
         tmp_dir = tempfile.mkdtemp()
         node_path = save_uploaded_file(node_csv, tmp_dir)
         pipe_path = save_uploaded_file(pipe_csv, tmp_dir)
+        asset_path = save_uploaded_file(asset_csv, tmp_dir) if asset_csv else None
 
         with st.spinner("Building map..."):
             try:
-                node_gdf, pipe_gdf = build_gis_data(node_path, pipe_path)
+                node_gdf, pipe_gdf, asset_gdf = build_gis_data(node_path, pipe_path, asset_path)
 
                 pipe_layer = create_pipe_layer(pipe_gdf)
+                layers = [pipe_layer]
+
+                if asset_gdf is not None:
+                    asset_layer = create_asset_layer(asset_gdf)
+                    layers.append(asset_layer)
 
                 mean_lon, mean_lat = node_gdf.geometry.x.mean(), node_gdf.geometry.y.mean()
 
@@ -128,7 +159,7 @@ def main():
                 deck_map = pdk.Deck(
                     map_style="mapbox://styles/mapbox/dark-v10",
                     initial_view_state=view_state,
-                    layers=[pipe_layer],
+                    layers=layers,
                     tooltip={"html": "{pipe_id}<br>{elevation}", "style": {"color": "white", "font-size": "14px"}}
                 )
 
@@ -138,7 +169,7 @@ def main():
             except Exception as e:
                 st.error(f"Error: {e}")
     else:
-        st.info("Upload Node & Pipe CSV files and click Render Map.")
+        st.info("Upload CSV files and click Render Map.")
 
 if __name__ == "__main__":
     main()
