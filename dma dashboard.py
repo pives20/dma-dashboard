@@ -3,28 +3,86 @@ import wntr
 import geopandas as gpd
 import pandas as pd
 import pydeck as pdk
-from shapely.geometry import Point, LineString
+import tempfile
+import zipfile
 import os
+from shapely.geometry import Point, LineString
 
 ############################################
-# 1) HELPER FUNCTIONS & DATA MODELING
+# 1) UTILITY FUNCTIONS
 ############################################
 
-@st.cache_data
-def load_epanet_model(inp_text: str):
-    """Loads an EPANET model from raw text (the .inp file contents)."""
-    temp_inp_path = "temp_network.inp"
-    with open(temp_inp_path, "w") as f:
-        f.write(inp_text)
-    wn = wntr.network.WaterNetworkModel(temp_inp_path)
-    if os.path.exists(temp_inp_path):
-        os.remove(temp_inp_path)
+def unzip_and_get_shp(zip_file) -> str:
+    """
+    Extracts a zipfile (uploaded via Streamlit) to a temp folder,
+    returns the path to the .shp file.
+    Assumes there's exactly one .shp inside the zip.
+    """
+    tdir = tempfile.mkdtemp()
+    with zipfile.ZipFile(zip_file, "r") as z:
+        z.extractall(tdir)
+    # Find the first .shp file in the temp folder
+    shp_path = None
+    for root, dirs, files in os.walk(tdir):
+        for f in files:
+            if f.lower().endswith(".shp"):
+                shp_path = os.path.join(root, f)
+                break
+    return shp_path
+
+def build_model_from_gis(nodes_shp: str, pipes_shp: str) -> wntr.network.WaterNetworkModel:
+    """
+    Reads node and pipe shapefiles (paths to .shp),
+    creates a WaterNetworkModel in memory.
+    Assumes certain columns:
+      - node_gdf: NodeID, Elev, Demand, geometry(Point)
+      - pipe_gdf: PipeID, StartID, EndID, Length, Diameter, Roughness, geometry(LineString)
+    """
+    wn = wntr.network.WaterNetworkModel()
+
+    # 1. Load node shapefile
+    node_gdf = gpd.read_file(nodes_shp)
+    # For each node
+    for idx, row in node_gdf.iterrows():
+        node_id = str(row["NodeID"])
+        elev = row.get("Elev", 0.0)
+        demand = row.get("Demand", 0.0)
+        wn.add_junction(name=node_id, base_demand=demand, elevation=elev)
+        # Store coordinates for reference (won't affect hydraulic calcs)
+        x, y = row.geometry.x, row.geometry.y
+        wn.get_node(node_id).coordinates = (float(x), float(y))
+
+    # 2. Load pipe shapefile
+    pipe_gdf = gpd.read_file(pipes_shp)
+    for idx, row in pipe_gdf.iterrows():
+        pipe_id   = str(row["PipeID"])
+        start_id  = str(row["StartID"])
+        end_id    = str(row["EndID"])
+        length    = row.get("Length", 0.0)
+        diameter  = row.get("Diameter", 100.0)
+        roughness = row.get("Roughness", 100.0)
+
+        # If no length in attribute, compute from geometry (in shapefile units)
+        if (not length) or (length <= 0):
+            length = row.geometry.length
+
+        wn.add_pipe(
+            name=pipe_id,
+            start_node_name=start_id,
+            end_node_name=end_id,
+            length=length,
+            diameter=diameter,
+            roughness=roughness,
+            minor_loss=0.0,
+            status='OPEN'
+        )
+
     return wn
 
-def run_simulation(wn: wntr.network.WaterNetworkModel):
+def run_epanet_simulation(wn: wntr.network.WaterNetworkModel):
     """
-    Run a hydraulic simulation on the given WaterNetworkModel,
-    returning final time-step results as dictionaries.
+    Runs an EPANET simulation via WNTR,
+    returns final time-step results as dicts (pressures, flows, etc.).
     """
     sim = wntr.sim.EpanetSimulator(wn)
     results = sim.run_sim()
@@ -45,7 +103,8 @@ def run_simulation(wn: wntr.network.WaterNetworkModel):
 
 def build_geodataframes(wn, results_dict):
     """
-    Convert the WNTR model + results into GeoDataFrames (nodes, links).
+    Convert WNTR model + results into GeoDataFrames (nodes, links).
+    We'll rely on the coordinates we stored in wn.get_node(node_id).coordinates.
     """
     node_data = []
     for node_name, node_obj in wn.nodes():
@@ -78,7 +137,7 @@ def build_geodataframes(wn, results_dict):
 
 def create_map_layers(node_gdf, link_gdf):
     """
-    Create Pydeck layers for interactive mapping.
+    Create Pydeck layers for a quick interactive map.
     """
     node_df = node_gdf.copy()
     node_df["lon"] = node_df.geometry.x
@@ -116,103 +175,6 @@ def create_map_layers(node_gdf, link_gdf):
     )
     return node_layer, link_layer
 
-############################################
-# 2) STREAMLIT APP
-############################################
-
-def main():
-    st.set_page_config(layout="wide")
-    st.title("DMA Dashboard (EPANET + Historic Leak Data + Assets)")
-
-    with st.sidebar:
-        st.header("Upload EPANET .inp File")
-        epanet_file = st.file_uploader("EPANET .inp", type=["inp"])
-
-        st.header("Upload DMA / Asset Data")
-        st.markdown("**Historic Leak Data:** (optional)")
-        leak_file = st.file_uploader("CSV/Excel with historic leaks", type=["csv", "xlsx"], key="leaks")
-
-        st.markdown("**DMA Details / Assets:** (optional)")
-        dma_file = st.file_uploader("CSV/Excel with DMA assets/pipes", type=["csv", "xlsx"], key="dma")
-
-        st.markdown("**Measured vs. Expected Flows:** (optional)")
-        flow_file = st.file_uploader("CSV/Excel with measured flows", type=["csv", "xlsx"], key="flows")
-
-    if not epanet_file:
-        st.info("Please upload an EPANET .inp file.")
-        return
-
-    # 1) Load the EPANET model
-    with st.spinner("Loading EPANET model..."):
-        inp_text = epanet_file.read().decode("utf-8")
-        wn = load_epanet_model(inp_text)
-
-    # 2) Run the simulation
-    with st.spinner("Running simulation..."):
-        results_dict = run_simulation(wn)
-
-    # 3) Build geodataframes for nodes & links
-    node_gdf, link_gdf = build_geodataframes(wn, results_dict)
-
-    # 4) Additional Data: Historic Leaks, DMA/Asset, Flow Comparisons
-    #    We'll store them in session_state or local variables just to show in the dashboard
-    if leak_file:
-        with st.spinner("Loading historic leak data..."):
-            df_leaks = load_user_data(leak_file)
-    else:
-        df_leaks = None
-
-    if dma_file:
-        with st.spinner("Loading DMA asset data..."):
-            df_dma = load_user_data(dma_file)
-    else:
-        df_dma = None
-
-    if flow_file:
-        with st.spinner("Loading measured flow data..."):
-            df_flow = load_user_data(flow_file)
-    else:
-        df_flow = None
-
-    # 5) Display Key Results / Summaries
-    st.subheader("Simulation Summary")
-    col1, col2, col3 = st.columns(3)
-    avg_pressure = node_gdf["pressure"].mean()
-    total_demand = node_gdf["demand"].sum()
-    avg_flow     = link_gdf["flow"].mean()
-    col1.metric("Avg Pressure (m)", f"{avg_pressure:.2f}")
-    col2.metric("Total Demand (L/s)", f"{total_demand:.2f}")
-    col3.metric("Avg Flow (L/s)", f"{avg_flow:.2f}")
-
-    # 6) Visualize the network with Pydeck
-    node_layer, link_layer = create_map_layers(node_gdf, link_gdf)
-    avg_lon = node_gdf.geometry.x.mean()
-    avg_lat = node_gdf.geometry.y.mean()
-    view_state = pdk.ViewState(latitude=avg_lat, longitude=avg_lon, zoom=13, pitch=0)
-    deck_map = pdk.Deck(layers=[link_layer, node_layer], initial_view_state=view_state)
-    st.pydeck_chart(deck_map, use_container_width=True)
-
-    # 7) Display user data (Historic leaks, DMA assets, etc.)
-    if df_leaks is not None:
-        st.subheader("Historic Leak Data")
-        st.dataframe(df_leaks)
-
-    if df_dma is not None:
-        st.subheader("DMA Asset Details")
-        st.dataframe(df_dma)
-
-    if df_flow is not None:
-        st.subheader("Measured vs. Expected Flow Data")
-        st.dataframe(df_flow)
-        # Potentially compare df_flow with your node/link_gdf to highlight mismatches
-
-    # 8) Show raw node/link data
-    with st.expander("Node Data"):
-        st.dataframe(node_gdf.drop(columns="geometry"))
-    with st.expander("Link Data"):
-        st.dataframe(link_gdf.drop(columns="geometry"))
-
-
 @st.cache_data
 def load_user_data(file):
     """
@@ -227,6 +189,88 @@ def load_user_data(file):
     else:
         df = pd.DataFrame()
     return df
+
+
+############################################
+# 2) STREAMLIT APP
+############################################
+
+def main():
+    st.set_page_config(layout="wide")
+    st.title("DMA Dashboard Using Shapefiles Instead of .inp")
+
+    # 1. File Uploads in Sidebar
+    with st.sidebar:
+        st.header("Upload Shapefiles (Zipped)")
+        node_zip = st.file_uploader("Node Shapefile (ZIPPED)", type=["zip"], key="node_zip")
+        pipe_zip = st.file_uploader("Pipe Shapefile (ZIPPED)", type=["zip"], key="pipe_zip")
+
+        st.markdown("---")
+        st.header("Upload Supplemental Data (Optional)")
+        leak_file = st.file_uploader("Historic Leaks CSV/XLSX", type=["csv","xlsx"], key="leaks")
+        dma_file  = st.file_uploader("DMA/Asset Data CSV/XLSX", type=["csv","xlsx"], key="dma")
+        flow_file = st.file_uploader("Measured Flows CSV/XLSX", type=["csv","xlsx"], key="flows")
+
+    # 2. Check if user uploaded both node & pipe shapefile zips
+    if not node_zip or not pipe_zip:
+        st.info("Please upload both Node and Pipe shapefiles (as .zip).")
+        return
+
+    # 3. Extract shapefiles & build water network model
+    with st.spinner("Building water network from GIS..."):
+        node_shp = unzip_and_get_shp(node_zip)
+        pipe_shp = unzip_and_get_shp(pipe_zip)
+        if not node_shp or not pipe_shp:
+            st.error("Could not find .shp inside the uploaded zip(s). Make sure they contain .shp, .dbf, etc.")
+            return
+        wn = build_model_from_gis(node_shp, pipe_shp)
+
+    # 4. Run EPANET simulation
+    with st.spinner("Running hydraulic simulation..."):
+        results_dict = run_epanet_simulation(wn)
+
+    # 5. Build geodataframes
+    node_gdf, link_gdf = build_geodataframes(wn, results_dict)
+
+    # 6. Supplemental data (leaks, dma, flows)
+    df_leaks = load_user_data(leak_file) if leak_file else None
+    df_dma   = load_user_data(dma_file)  if dma_file  else None
+    df_flow  = load_user_data(flow_file) if flow_file else None
+
+    # 7. Display some summary stats
+    st.subheader("Simulation Summary")
+    col1, col2, col3 = st.columns(3)
+    avg_pressure = node_gdf["pressure"].mean()
+    total_demand = node_gdf["demand"].sum()
+    avg_flow     = link_gdf["flow"].mean()
+    col1.metric("Avg Pressure (m)", f"{avg_pressure:.2f}")
+    col2.metric("Total Demand (L/s)", f"{total_demand:.2f}")
+    col3.metric("Avg Flow (L/s)", f"{avg_flow:.2f}")
+
+    # 8. Display map
+    node_layer, link_layer = create_map_layers(node_gdf, link_gdf)
+    avg_lon = node_gdf.geometry.x.mean()
+    avg_lat = node_gdf.geometry.y.mean()
+    view_state = pdk.ViewState(latitude=avg_lat, longitude=avg_lon, zoom=13, pitch=0)
+    deck_map = pdk.Deck(layers=[link_layer, node_layer], initial_view_state=view_state)
+    st.pydeck_chart(deck_map, use_container_width=True)
+
+    # 9. Show supplemental data
+    if df_leaks is not None:
+        st.subheader("Historic Leak Data")
+        st.dataframe(df_leaks)
+    if df_dma is not None:
+        st.subheader("DMA / Asset Data")
+        st.dataframe(df_dma)
+    if df_flow is not None:
+        st.subheader("Measured vs. Expected Flows")
+        st.dataframe(df_flow)
+
+    # 10. Node / Link Data
+    with st.expander("Node Data"):
+        st.dataframe(node_gdf.drop(columns="geometry"))
+    with st.expander("Link Data"):
+        st.dataframe(link_gdf.drop(columns="geometry"))
 
 
 if __name__ == "__main__":
