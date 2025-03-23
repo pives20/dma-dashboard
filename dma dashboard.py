@@ -9,7 +9,7 @@ from shapely.geometry import Point, LineString
 #############################
 # 1) SETUP MAPBOX TOKEN
 #############################
-os.environ["MAPBOX_API_KEY"] = "YOUR_MAPBOX_TOKEN"
+os.environ["pk.eyJ1IjoicGl2ZXMiLCJhIjoiY204bGVweHY5MTFnZDJscXluOTJ1OHI5OCJ9.3BHtAPkRsjGbwgNykec4VA"] = "pk.eyJ1IjoicGl2ZXMiLCJhIjoiY204bGVweHY5MTFnZDJscXluOTJ1OHI5OCJ9.3BHtAPkRsjGbwgNykec4VA"
 
 #############################
 # 2) CUSTOM DARK THEME
