@@ -1,12 +1,3 @@
-Implementing a comprehensive criticality feature (toggleable) based on pipe age and material involves extending your existing app clearly. Here is the full, robust integration:
-
-### Enhanced Streamlit DMA Dashboard with Criticality Feature
-
-Here's your complete, clearly structured Streamlit app code integrating:
-- Pipes color-coded based on criticality (age and material)
-- A sidebar toggle to enable/disable criticality visualization dynamically
-
-```python
 import os
 import streamlit as st
 import pandas as pd
@@ -49,7 +40,11 @@ def build_gis_data(node_csv, pipe_csv, leak_csv, original_crs="EPSG:27700"):
     pipe_gdf = gpd.GeoDataFrame(pipe_records, crs="EPSG:4326")
 
     df_leaks = df_leaks.dropna(subset=['XCoord', 'YCoord', 'Year'])
-    leak_gdf = gpd.GeoDataFrame(df_leaks, geometry=gpd.points_from_xy(df_leaks['XCoord'], df_leaks['YCoord']), crs=original_crs).to_crs("EPSG:4326")
+    leak_gdf = gpd.GeoDataFrame(
+        df_leaks,
+        geometry=gpd.points_from_xy(df_leaks['XCoord'], df_leaks['YCoord']),
+        crs=original_crs
+    ).to_crs("EPSG:4326")
 
     return node_gdf, pipe_gdf, leak_gdf
 
@@ -99,28 +94,27 @@ if st.button("Render Map"):
 
         node_gdf, pipe_gdf, leak_gdf = build_gis_data(node_path, pipe_path, leak_path)
 
-        year_slider = st.slider("Select Year for Leak Visualization", min_value=int(leak_gdf["Year"].min()), max_value=int(leak_gdf["Year"].max()), value=int(leak_gdf["Year"].min()))
+        year_slider = st.slider("Select Year for Leak Visualization",
+                                min_value=int(leak_gdf["Year"].min()),
+                                max_value=int(leak_gdf["Year"].max()),
+                                value=int(leak_gdf["Year"].min()))
         filtered_leaks = leak_gdf[leak_gdf["Year"] == year_slider]
 
         layers = [create_pipe_layer(pipe_gdf, criticality_on), create_leak_heatmap_layer(filtered_leaks)]
 
-        view_state = pdk.ViewState(latitude=node_gdf.geometry.y.mean(), longitude=node_gdf.geometry.x.mean(), zoom=13, pitch=45)
+        view_state = pdk.ViewState(latitude=node_gdf.geometry.y.mean(),
+                                   longitude=node_gdf.geometry.x.mean(),
+                                   zoom=13, pitch=45)
+
         deck_map = pdk.Deck(
             map_style="mapbox://styles/mapbox/dark-v10",
             initial_view_state=view_state,
             layers=layers,
-            tooltip={"html": "<b>{pipe_id}</b><br>Material: {Material}<br>Age: {Age} years", "style": {"color": "white"}}
+            tooltip={
+                "html": "<b>{pipe_id}</b><br>Material: {Material}<br>Age: {Age} years",
+                "style": {"color": "white"}
+            }
         )
 
         st.pydeck_chart(deck_map, use_container_width=True)
         st.success(f"DMA Dashboard rendered successfully for year {year_slider}")
-```
-
-### How it clearly works:
-- The **sidebar checkbox** toggles the criticality visualization on/off.
-- Pipes clearly color-coded by age and material when enabled:
-  - **Red:** High criticality (Cast Iron or Age > 50)
-  - **Orange:** Medium criticality (Age 30-50)
-  - **Green:** Low criticality (Age < 30)
-
-Let me know if you'd like further refinements or additional features!
