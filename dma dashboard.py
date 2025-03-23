@@ -55,7 +55,7 @@ def build_gis_data(node_csv_path, pipe_csv_path, original_crs="EPSG:27700"):
         start_node = node_map.get(str(row["StartID"]))
         end_node = node_map.get(str(row["EndID"]))
 
-        if not start_node or not end_node:
+        if start_node is None or end_node is None:
             raise ValueError(f"Pipe {pipe_id} references invalid nodes.")
 
         avg_elev = (start_node["elevation"] + end_node["elevation"]) / 2
