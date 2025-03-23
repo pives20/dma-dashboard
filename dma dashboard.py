@@ -1,14 +1,24 @@
+import os
 import streamlit as st
 import pandas as pd
 import pydeck as pdk
 import geopandas as gpd
 from shapely.geometry import Point, LineString
-import os
 import tempfile
 
+##############################
+# 1) MAPBOX TOKEN
+##############################
+# WARNING: Replace this with your actual token
+# or put it in an environment variable or secrets
+os.environ["MAPBOX_API_KEY"] = "pk.eyJ1IjoicGl2ZXMiLCJhIjoiY204bGR4cW43MDRtaDJpczc5aGw2cWV1aSJ9.4qLun-s4b-oXxuoEwMqe6g"
+
+##############################
+# 2) UTILITY FUNCTIONS
+##############################
 def save_uploaded_file(uploaded_file, directory):
     """Save a Streamlit-uploaded file to a local temp directory."""
-    file_path = os.path.join(directory, uploaded_file.name)
+    file_path = directory + "/" + uploaded_file.name
     with open(file_path, "wb") as f:
         f.write(uploaded_file.read())
     return file_path
@@ -16,31 +26,33 @@ def save_uploaded_file(uploaded_file, directory):
 def build_gis_model(node_csv_path, pipe_csv_path):
     """
     Build a GIS-based water network from two CSVs:
-    Node CSV must have columns: NodeID, XCoord, YCoord
-    Pipe CSV must have: PipeID, StartID, EndID
-    (No EPANET / no reservoir needed, just geometry)
+      - Node CSV must have columns: NodeID, XCoord, YCoord, ...
+      - Pipe CSV must have columns: PipeID, StartID, EndID, ...
+    We'll interpret XCoord as longitude, YCoord as latitude in EPSG:4326.
+    Returns two GeoDataFrames: (node_gdf, pipe_gdf).
     """
     df_nodes = pd.read_csv(node_csv_path)
     df_pipes = pd.read_csv(pipe_csv_path)
 
-    # 1) Create node GeoDataFrame
+    # Create GeoDataFrame for nodes
     node_records = []
-    for _, row in df_nodes.iterrows():
+    for idx, row in df_nodes.iterrows():
         node_id = str(row["NodeID"])
-        x = float(row["XCoord"])  # Should be LONGITUDE
-        y = float(row["YCoord"])  # Should be LATITUDE
+        x = float(row["XCoord"])  # LONGITUDE
+        y = float(row["YCoord"])  # LATITUDE
         geometry = Point(x, y)
-        
+
         rec = row.to_dict()
         rec["node_id"] = node_id
         rec["geometry"] = geometry
         node_records.append(rec)
-    node_gdf = gpd.GeoDataFrame(node_records, crs="EPSG:4326")  # lat/lon
 
-    # 2) Create pipe GeoDataFrame by linking node coords
+    node_gdf = gpd.GeoDataFrame(node_records, crs="EPSG:4326")
+
+    # Create GeoDataFrame for pipes, linking node coords
     node_map = { r["node_id"]: r.geometry for _, r in node_gdf.iterrows() }
     pipe_records = []
-    for _, row in df_pipes.iterrows():
+    for idx, row in df_pipes.iterrows():
         pipe_id = str(row["PipeID"])
         start_id = str(row["StartID"])
         end_id   = str(row["EndID"])
@@ -48,7 +60,7 @@ def build_gis_model(node_csv_path, pipe_csv_path):
         start_geom = node_map.get(start_id)
         end_geom   = node_map.get(end_id)
         if not start_geom or not end_geom:
-            raise ValueError(f"Pipe {pipe_id} references invalid node {start_id} or {end_id}")
+            raise ValueError(f"Pipe {pipe_id} references missing node {start_id} or {end_id}")
 
         line = LineString([start_geom.coords[0], end_geom.coords[0]])
 
@@ -61,15 +73,17 @@ def build_gis_model(node_csv_path, pipe_csv_path):
 
     return node_gdf, pipe_gdf
 
-def create_map_layers(node_gdf, pipe_gdf):
+def create_pydeck_layers(node_gdf, pipe_gdf):
+    """
+    Create Pydeck layers for the nodes & pipes.
+    """
     # Convert node geometry to lon/lat for Pydeck
     node_df = node_gdf.copy()
     node_df["lon"] = node_df.geometry.x
     node_df["lat"] = node_df.geometry.y
 
-    # Build path coords for pipes
     pipe_records = []
-    for _, row in pipe_gdf.iterrows():
+    for idx, row in pipe_gdf.iterrows():
         coords = list(row.geometry.coords)
         path_coords = [[float(x), float(y)] for (x, y) in coords]
         pipe_records.append({
@@ -79,6 +93,7 @@ def create_map_layers(node_gdf, pipe_gdf):
             "end": row["EndID"]
         })
 
+    # Scatterplot for nodes
     node_layer = pdk.Layer(
         "ScatterplotLayer",
         data=node_df,
@@ -88,6 +103,7 @@ def create_map_layers(node_gdf, pipe_gdf):
         pickable=True
     )
 
+    # Path for pipes
     pipe_layer = pdk.Layer(
         "PathLayer",
         data=pipe_records,
@@ -99,14 +115,20 @@ def create_map_layers(node_gdf, pipe_gdf):
 
     return node_layer, pipe_layer
 
+##############################
+# 3) STREAMLIT APP
+##############################
 def main():
     st.set_page_config(layout="wide")
-    st.title("GIS Map of DMA (Dark Basemap)")
+    st.title("DMA Map with Pydeck (Dark Basemap) + Your Mapbox Token")
 
-    st.markdown("Upload Node & Pipe CSV, then see a dark Mapbox background, with your network on top.")
+    st.write("**Instructions**:")
+    st.write("1) Upload your Node CSV (must have `NodeID, XCoord, YCoord`).")
+    st.write("2) Upload your Pipe CSV (must have `PipeID, StartID, EndID`).")
+    st.write("3) We'll display a dark map with your data on top.")
 
-    node_csv = st.file_uploader("Node CSV (XCoord, YCoord must be lat/lon!)", type=["csv"])
-    pipe_csv = st.file_uploader("Pipe CSV (references NodeID)", type=["csv"])
+    node_csv = st.file_uploader("Node CSV", type=["csv"], key="node_csv")
+    pipe_csv = st.file_uploader("Pipe CSV", type=["csv"], key="pipe_csv")
 
     if st.button("Build Map"):
         if not node_csv or not pipe_csv:
@@ -117,14 +139,18 @@ def main():
         node_path = save_uploaded_file(node_csv, temp_dir)
         pipe_path = save_uploaded_file(pipe_csv, temp_dir)
 
-        with st.spinner("Building model & creating map..."):
+        with st.spinner("Building your GIS model..."):
             try:
                 node_gdf, pipe_gdf = build_gis_model(node_path, pipe_path)
-                
-                # Create Pydeck layers
-                node_layer, pipe_layer = create_map_layers(node_gdf, pipe_gdf)
+                st.success("Model built successfully!")
 
-                # Center map on average location
+                st.write(f"Nodes: {len(node_gdf)}")
+                st.write(f"Pipes: {len(pipe_gdf)}")
+
+                # Build Pydeck layers
+                node_layer, pipe_layer = create_pydeck_layers(node_gdf, pipe_gdf)
+
+                # Compute center
                 mean_lon = node_gdf.geometry.x.mean()
                 mean_lat = node_gdf.geometry.y.mean()
 
@@ -136,23 +162,22 @@ def main():
                 )
 
                 deck_map = pdk.Deck(
-                    map_style="mapbox://styles/mapbox/dark-v10",  # Dark style
+                    map_style="mapbox://styles/mapbox/dark-v10",
                     initial_view_state=view_state,
                     layers=[pipe_layer, node_layer],
                     tooltip={
-                        "html": "<b>Node:</b> {node_id} <br /><b>Pipe:</b> {pipe_id}",
+                        "html": "Node: {node_id} | Pipe: {pipe_id}",
                         "style": {"color": "white"}
                     },
                 )
 
                 st.pydeck_chart(deck_map, use_container_width=True)
-                st.success("Done! Scroll/zoom around the map.")
-                st.info("If the map is blank, check your lat/lon or you may need a Mapbox token.")
+                st.info("Use scroll/pinch to zoom, drag to pan. Hover to see node/pipe IDs.")
+
             except Exception as e:
                 st.error(f"Failed to build map: {e}")
     else:
         st.info("Upload Node & Pipe CSV, then click 'Build Map'.")
-
 
 if __name__ == "__main__":
     main()
