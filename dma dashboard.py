@@ -34,7 +34,7 @@ def save_uploaded_file(uploaded_file, directory):
         f.write(uploaded_file.read())
     return file_path
 
-def build_gis_data(node_csv_path, pipe_csv_path, asset_csv_path=None, original_crs="EPSG:27700"):
+def build_gis_data(node_csv_path, pipe_csv_path, asset_csv_path=None, leak_csv_path=None, original_crs="EPSG:27700"):
     df_nodes = pd.read_csv(node_csv_path)
     df_pipes = pd.read_csv(pipe_csv_path)
 
@@ -81,101 +81,45 @@ def build_gis_data(node_csv_path, pipe_csv_path, asset_csv_path=None, original_c
                 ).to_crs("EPSG:4326")
                 break
         else:
-            raise ValueError("Asset CSV missing coordinate columns (e.g., XCoord, YCoord or Longitude, Latitude)")
+            raise ValueError("Asset CSV missing coordinate columns.")
 
-    return node_gdf, pipe_gdf, asset_gdf
+    leak_gdf = None
+    if leak_csv_path:
+        df_leaks = pd.read_csv(leak_csv_path)
+        for x_col, y_col in coord_cols:
+            if x_col in df_leaks.columns and y_col in df_leaks.columns:
+                leak_gdf = gpd.GeoDataFrame(
+                    df_leaks,
+                    geometry=gpd.points_from_xy(df_leaks[x_col], df_leaks[y_col]),
+                    crs=original_crs
+                ).to_crs("EPSG:4326")
+                break
+        else:
+            raise ValueError("Leak CSV missing coordinate columns.")
+
+    return node_gdf, pipe_gdf, asset_gdf, leak_gdf
 
 def create_pipe_layer(pipe_gdf):
     data = pipe_gdf.copy()
-
     pipe_records = [{
         "pipe_id": f"Pipe: {row.pipe_id}",
         "path": [[pt[0], pt[1]] for pt in row.geometry.coords],
         "color": [0, 255, 255],
         "elevation": f"Elevation: {row.elevation:.2f} m"
     } for idx, row in data.iterrows()]
+    return pdk.Layer("PathLayer", data=pipe_records, get_path="path", get_color="color", width_min_pixels=2, get_width=5, pickable=True)
 
-    return pdk.Layer(
-        "PathLayer",
-        data=pipe_records,
-        get_path="path",
-        get_color="color",
-        width_min_pixels=2,
-        get_width=5,
-        pickable=True
-    )
-
-def create_asset_layer(asset_gdf):
-    data = asset_gdf.copy()
+def create_point_layer(gdf, color, radius=10):
+    data = gdf.copy()
     data["lon"] = data.geometry.x
     data["lat"] = data.geometry.y
-
-    return pdk.Layer(
-        "ScatterplotLayer",
-        data=data,
-        get_position=["lon", "lat"],
-        get_fill_color=[255, 0, 0],
-        get_radius=10,
-        pickable=True
-    )
+    return pdk.Layer("ScatterplotLayer", data=data, get_position=["lon", "lat"], get_fill_color=color, get_radius=radius, pickable=True)
 
 #############################
 # 4) STREAMLIT APP
 #############################
 def main():
-    st.title("3D DMA Elevation, Pipe & Asset Visualization")
-
-    st.sidebar.header("Map Settings")
+    st.title("3D DMA Elevation, Pipe, Asset & Leak Visualization")
 
     node_csv = st.file_uploader("Upload Node CSV", type=["csv"], key="node_csv")
-    pipe_csv = st.file_uploader("Upload Pipe CSV", type=["csv"], key="pipe_csv")
-    asset_csv = st.file_uploader("Upload Asset CSV (Valves, Hydrants, etc.)", type=["csv"], key="asset_csv")
-
-    if st.button("Render Map"):
-        if not node_csv or not pipe_csv:
-            st.error("Please upload Node and Pipe CSV files.")
-            return
-
-        tmp_dir = tempfile.mkdtemp()
-        node_path = save_uploaded_file(node_csv, tmp_dir)
-        pipe_path = save_uploaded_file(pipe_csv, tmp_dir)
-        asset_path = save_uploaded_file(asset_csv, tmp_dir) if asset_csv else None
-
-        with st.spinner("Building map..."):
-            try:
-                node_gdf, pipe_gdf, asset_gdf = build_gis_data(node_path, pipe_path, asset_path)
-
-                pipe_layer = create_pipe_layer(pipe_gdf)
-                layers = [pipe_layer]
-
-                if asset_gdf is not None:
-                    asset_layer = create_asset_layer(asset_gdf)
-                    layers.append(asset_layer)
-
-                mean_lon, mean_lat = node_gdf.geometry.x.mean(), node_gdf.geometry.y.mean()
-
-                view_state = pdk.ViewState(
-                    longitude=mean_lon,
-                    latitude=mean_lat,
-                    zoom=13,
-                    pitch=45,
-                    bearing=30
-                )
-
-                deck_map = pdk.Deck(
-                    map_style="mapbox://styles/mapbox/dark-v10",
-                    initial_view_state=view_state,
-                    layers=layers,
-                    tooltip={"html": "{pipe_id}<br>{elevation}", "style": {"color": "white", "font-size": "14px"}}
-                )
-
-                st.pydeck_chart(deck_map, use_container_width=True)
-                st.success("Map successfully rendered!")
-
-            except Exception as e:
-                st.error(f"Error: {e}")
-    else:
-        st.info("Upload CSV files and click Render Map.")
-
-if __name__ == "__main__":
-    main()
+    pipe_csv = st.file_uploader("Upload Pipe CSV
