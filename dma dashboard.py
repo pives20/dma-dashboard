@@ -47,55 +47,27 @@ def build_gis_data(node_csv_path, pipe_csv_path, original_crs="EPSG:27700"):
         crs=original_crs
     ).to_crs("EPSG:4326")
 
-    node_map = {str(row.NodeID): row.geometry for idx, row in node_gdf.iterrows()}
+    node_map = {str(row.NodeID): row for idx, row in node_gdf.iterrows()}
 
     pipe_records = []
     for _, row in df_pipes.iterrows():
         pipe_id = str(row["PipeID"])
-        start_geom = node_map.get(str(row["StartID"]))
-        end_geom = node_map.get(str(row["EndID"]))
+        start_node = node_map.get(str(row["StartID"]))
+        end_node = node_map.get(str(row["EndID"]))
 
-        if not start_geom or not end_geom:
+        if not start_node or not end_node:
             raise ValueError(f"Pipe {pipe_id} references invalid nodes.")
+
+        avg_elev = (start_node["elevation"] + end_node["elevation"]) / 2
 
         pipe_records.append({
             "pipe_id": pipe_id,
-            "geometry": LineString([start_geom, end_geom])
+            "geometry": LineString([start_node.geometry, end_node.geometry]),
+            "elevation": avg_elev
         })
 
     pipe_gdf = gpd.GeoDataFrame(pipe_records, crs="EPSG:4326")
     return node_gdf, pipe_gdf
-
-def create_3d_elevation_layer(node_gdf):
-    data = node_gdf.copy()
-    data["lon"] = data.geometry.x
-    data["lat"] = data.geometry.y
-    data["elevation"] = data.get("elevation", 0)
-    data["pipe_id"] = ""
-
-    max_elev = data["elevation"].max() or 1
-    data["height"] = (data["elevation"] / max_elev) * 2000
-
-    def elev_to_color(e):
-        ratio = e / max_elev
-        r = 139 + int((205 - 139) * ratio)
-        g = 69 + int((133 - 69) * ratio)
-        b = 19 + int((63 - 19) * ratio)
-        return [r, g, b]
-
-    data["color"] = data["elevation"].apply(elev_to_color)
-
-    return pdk.Layer(
-        "ColumnLayer",
-        data=data,
-        get_position=["lon", "lat"],
-        get_elevation="height",
-        elevation_scale=1,
-        radius=30,
-        get_fill_color="color",
-        pickable=True,
-        extruded=True
-    )
 
 def create_pipe_layer(pipe_gdf):
     data = pipe_gdf.copy()
@@ -104,7 +76,7 @@ def create_pipe_layer(pipe_gdf):
         "pipe_id": f"Pipe: {row.pipe_id}",
         "path": [[pt[0], pt[1]] for pt in row.geometry.coords],
         "color": [0, 255, 255],
-        "elevation": ""
+        "elevation": f"Elevation: {row.elevation:.2f} m"
     } for idx, row in data.iterrows()]
 
     return pdk.Layer(
@@ -141,7 +113,6 @@ def main():
             try:
                 node_gdf, pipe_gdf = build_gis_data(node_path, pipe_path)
 
-                elev_layer = create_3d_elevation_layer(node_gdf)
                 pipe_layer = create_pipe_layer(pipe_gdf)
 
                 mean_lon, mean_lat = node_gdf.geometry.x.mean(), node_gdf.geometry.y.mean()
@@ -157,8 +128,8 @@ def main():
                 deck_map = pdk.Deck(
                     map_style="mapbox://styles/mapbox/dark-v10",
                     initial_view_state=view_state,
-                    layers=[pipe_layer, elev_layer],
-                    tooltip={"html": "{pipe_id}{elevation}", "style": {"color": "white", "font-size": "14px"}}
+                    layers=[pipe_layer],
+                    tooltip={"html": "{pipe_id}<br>{elevation}", "style": {"color": "white", "font-size": "14px"}}
                 )
 
                 st.pydeck_chart(deck_map, use_container_width=True)
