@@ -142,4 +142,20 @@ def main():
                 node_gdf, pipe_gdf, asset_gdf, leak_gdf = build_gis_data(node_path, pipe_path, asset_path, leak_path)
 
                 layers = [create_pipe_layer(pipe_gdf)]
-                if
+                if asset_gdf is not None:
+                    layers.append(create_point_layer(asset_gdf, [255, 0, 0]))
+                if leak_gdf is not None:
+                    layers.append(create_point_layer(leak_gdf, [255, 255, 0], radius=8))
+
+                view_state = pdk.ViewState(longitude=node_gdf.geometry.x.mean(), latitude=node_gdf.geometry.y.mean(), zoom=13, pitch=45, bearing=30)
+                deck_map = pdk.Deck(map_style="mapbox://styles/mapbox/dark-v10", initial_view_state=view_state, layers=layers, tooltip={"html": "{pipe_id}<br>{elevation}", "style": {"color": "white"}})
+
+                st.pydeck_chart(deck_map, use_container_width=True)
+                st.success("Map successfully rendered!")
+            except Exception as e:
+                st.error(f"Error: {e}")
+    else:
+        st.info("Upload CSV files and click Render Map.")
+
+if __name__ == "__main__":
+    main()
