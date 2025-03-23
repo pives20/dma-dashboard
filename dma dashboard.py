@@ -17,7 +17,7 @@ def save_uploaded_file(uploaded_file, directory):
         f.write(uploaded_file.read())
     return file_path
 
-def build_gis_data(node_csv, pipe_csv, leak_csv, original_crs="EPSG:27700"):
+def build_gis_data(node_csv, pipe_csv, leak_csv, asset_csv=None, original_crs="EPSG:27700"):
     df_nodes = pd.read_csv(node_csv)
     df_pipes = pd.read_csv(pipe_csv)
     df_leaks = pd.read_csv(leak_csv)
@@ -40,25 +40,26 @@ def build_gis_data(node_csv, pipe_csv, leak_csv, original_crs="EPSG:27700"):
     pipe_gdf = gpd.GeoDataFrame(pipe_records, crs="EPSG:4326")
 
     df_leaks = df_leaks.dropna(subset=['XCoord', 'YCoord', 'Year'])
-    leak_gdf = gpd.GeoDataFrame(
-        df_leaks,
-        geometry=gpd.points_from_xy(df_leaks['XCoord'], df_leaks['YCoord']),
-        crs=original_crs
-    ).to_crs("EPSG:4326")
+    leak_gdf = gpd.GeoDataFrame(df_leaks, geometry=gpd.points_from_xy(df_leaks['XCoord'], df_leaks['YCoord']), crs=original_crs).to_crs("EPSG:4326")
 
-    return node_gdf, pipe_gdf, leak_gdf
+    asset_gdf = None
+    if asset_csv:
+        df_assets = pd.read_csv(asset_csv)
+        asset_gdf = gpd.GeoDataFrame(df_assets, geometry=gpd.points_from_xy(df_assets.XCoord, df_assets.YCoord), crs=original_crs).to_crs("EPSG:4326")
+
+    return node_gdf, pipe_gdf, leak_gdf, asset_gdf
 
 # Layers creation with criticality
 def create_pipe_layer(pipe_gdf, criticality_on):
     def pipe_color(row):
         if criticality_on:
             if row['Material'] == "Cast Iron" or row['Age'] > 50:
-                return [255, 0, 0]  # High criticality
+                return [255, 0, 0]
             elif row['Age'] > 30:
-                return [255, 165, 0]  # Medium criticality
+                return [255, 165, 0]
             else:
-                return [0, 255, 0]  # Low criticality
-        return [0, 255, 255]  # Default color if criticality off
+                return [0, 255, 0]
+        return [0, 255, 255]
 
     pipe_data = [{
         "path": [[pt[0], pt[1]] for pt in row.geometry.coords],
@@ -74,46 +75,44 @@ def create_leak_heatmap_layer(leak_gdf):
     leak_data = [{"position": [geom.x, geom.y]} for geom in leak_gdf.geometry]
     return pdk.Layer("HeatmapLayer", leak_data, get_position="position", radius=30, opacity=0.6)
 
+def create_asset_layer(asset_gdf):
+    asset_data = [{"position": [geom.x, geom.y], "AssetID": row.AssetID, "AssetType": row.AssetType} for geom, row in zip(asset_gdf.geometry, asset_gdf.itertuples())]
+    return pdk.Layer("ScatterplotLayer", asset_data, get_position="position", get_fill_color=[0, 255, 0], get_radius=10, pickable=True)
+
 # Streamlit App
-st.title("DMA Dashboard: Leak & Pipe Criticality Visualization")
+st.title("DMA Dashboard: Leak, Asset & Pipe Criticality Visualization")
 
 node_csv = st.file_uploader("Upload Node CSV", type=["csv"])
 pipe_csv = st.file_uploader("Upload Pipe CSV (include 'Age' and 'Material')", type=["csv"])
 leak_csv = st.file_uploader("Upload Leak CSV (include 'Year')", type=["csv"])
+asset_csv = st.file_uploader("Upload Asset CSV", type=["csv"])
 
 criticality_on = st.sidebar.checkbox("Toggle Pipe Criticality Visualization", value=False)
 
 if st.button("Render Map"):
-    if not node_csv or not pipe_csv or not leak_csv:
+    if not node_csv or not pipe_csv or not leak_csv or not asset_csv:
         st.error("Please upload all CSV files.")
     else:
         tmp_dir = tempfile.mkdtemp()
         node_path = save_uploaded_file(node_csv, tmp_dir)
         pipe_path = save_uploaded_file(pipe_csv, tmp_dir)
         leak_path = save_uploaded_file(leak_csv, tmp_dir)
+        asset_path = save_uploaded_file(asset_csv, tmp_dir)
 
-        node_gdf, pipe_gdf, leak_gdf = build_gis_data(node_path, pipe_path, leak_path)
+        node_gdf, pipe_gdf, leak_gdf, asset_gdf = build_gis_data(node_path, pipe_path, leak_path, asset_path)
 
-        year_slider = st.slider("Select Year for Leak Visualization",
-                                min_value=int(leak_gdf["Year"].min()),
-                                max_value=int(leak_gdf["Year"].max()),
-                                value=int(leak_gdf["Year"].min()))
+        year_slider = st.slider("Select Year for Leak Visualization", min_value=int(leak_gdf["Year"].min()), max_value=int(leak_gdf["Year"].max()), value=int(leak_gdf["Year"].min()))
         filtered_leaks = leak_gdf[leak_gdf["Year"] == year_slider]
 
-        layers = [create_pipe_layer(pipe_gdf, criticality_on), create_leak_heatmap_layer(filtered_leaks)]
+        layers = [create_pipe_layer(pipe_gdf, criticality_on), create_leak_heatmap_layer(filtered_leaks), create_asset_layer(asset_gdf)]
 
-        view_state = pdk.ViewState(latitude=node_gdf.geometry.y.mean(),
-                                   longitude=node_gdf.geometry.x.mean(),
-                                   zoom=13, pitch=45)
+        view_state = pdk.ViewState(latitude=node_gdf.geometry.y.mean(), longitude=node_gdf.geometry.x.mean(), zoom=13, pitch=45)
 
         deck_map = pdk.Deck(
             map_style="mapbox://styles/mapbox/dark-v10",
             initial_view_state=view_state,
             layers=layers,
-            tooltip={
-                "html": "<b>{pipe_id}</b><br>Material: {Material}<br>Age: {Age} years",
-                "style": {"color": "white"}
-            }
+            tooltip={"html": "<b>{pipe_id}{AssetID}</b><br>Material: {Material}<br>Age: {Age} years", "style": {"color": "white"}}
         )
 
         st.pydeck_chart(deck_map, use_container_width=True)
