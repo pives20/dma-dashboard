@@ -8,7 +8,7 @@ from shapely.geometry import LineString
 from datetime import datetime
 
 st.set_page_config(layout="wide")
-os.environ["MAPBOX_API_KEY"] = "your-mapbox-token-here"
+os.environ["MAPBOX_API_KEY"] = "your-mapbox-token-here"  # Replace with your token
 
 def load_shapefile(files, expected_geom):
     try:
@@ -84,10 +84,8 @@ def create_point_layer(gdf, color, radius):
         pickable=True
     )
 
-# --------------------------
-# Sidebar File Uploads
-# --------------------------
-st.title("💧 DMA Dashboard – Shapefile Support for Pipes")
+# Sidebar Uploads
+st.title("💧 DMA Dashboard – Pipes Without Nodes (Optional)")
 
 criticality_on = st.sidebar.checkbox("Show Pipe Criticality", value=True)
 
@@ -99,7 +97,7 @@ pipe_files = st.sidebar.file_uploader(
     key="pipes"
 )
 
-st.sidebar.header("Upload Nodes")
+st.sidebar.header("Upload Nodes (Optional)")
 node_files = st.sidebar.file_uploader(
     "Upload node shapefile (point)",
     type=["shp", "shx", "dbf", "prj"],
@@ -123,30 +121,37 @@ leak_files = st.sidebar.file_uploader(
     key="leaks"
 )
 
-# --------------------------
-# Load Layers
-# --------------------------
+# Load DataFrames
 pipe_gdf = load_shapefile(pipe_files, "Line") if pipe_files else None
 node_gdf = load_shapefile(node_files, "Point") if node_files else None
 asset_gdf = load_shapefile(asset_files, "Point") if asset_files else None
 leak_gdf = load_shapefile(leak_files, "Point") if leak_files else None
 
-# --------------------------
 # Render Map
-# --------------------------
 if st.button("Render Map"):
-    if node_gdf is None or pipe_gdf is None:
-        st.error("Please upload both Pipes and Nodes shapefiles.")
+    if pipe_gdf is None:
+        st.error("Please upload at least a Pipes shapefile.")
     else:
         layers = [create_pipe_layer(pipe_gdf, criticality_on)]
+
         if asset_gdf is not None:
             layers.append(create_point_layer(asset_gdf, [0, 200, 255], 30))
         if leak_gdf is not None:
             layers.append(create_point_layer(leak_gdf, [255, 0, 0], 20))
 
+        # Map centering logic
+        if node_gdf is not None and not node_gdf.empty:
+            lat = node_gdf.geometry.y.mean()
+            lon = node_gdf.geometry.x.mean()
+        elif pipe_gdf is not None and not pipe_gdf.empty:
+            lat = pipe_gdf.geometry.centroid.y.mean()
+            lon = pipe_gdf.geometry.centroid.x.mean()
+        else:
+            lat, lon = 0, 0  # fallback
+
         view = pdk.ViewState(
-            latitude=node_gdf.geometry.y.mean(),
-            longitude=node_gdf.geometry.x.mean(),
+            latitude=lat,
+            longitude=lon,
             zoom=13,
             pitch=45
         )
