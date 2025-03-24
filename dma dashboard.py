@@ -1,143 +1,178 @@
 import os
+import tempfile
 import streamlit as st
 import pandas as pd
 import geopandas as gpd
 import pydeck as pdk
-import tempfile
 from shapely.geometry import LineString
 from datetime import datetime
 
-os.environ["MAPBOX_API_KEY"] = "pk.eyJ1IjoicGl2ZXMiLCJhIjoiY204bGVweHY5MTFnZDJscXluOTJ1OHI5OCJ9.3BHtAPkRsjGbwgNykec4VA"
-
 st.set_page_config(layout="wide")
+os.environ["MAPBOX_API_KEY"] = "your-mapbox-token-here"  # Replace with your token
 
-# Helper functions
-def save_uploaded_file(uploaded_file, directory):
-    file_path = os.path.join(directory, uploaded_file.name)
-    with open(file_path, "wb") as f:
-        f.write(uploaded_file.read())
-    return file_path
+# Utility to load shapefiles
+def load_shapefile(files):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        for file in files:
+            with open(os.path.join(tmpdir, file.name), "wb") as f:
+                f.write(file.read())
+        shp_path = [f.name for f in files if f.name.endswith(".shp")][0]
+        return gpd.read_file(os.path.join(tmpdir, shp_path))
 
-def build_gis_data(node_csv, pipe_csv, leak_csv, asset_csv=None, original_crs="EPSG:27700"):
-    df_nodes = pd.read_csv(node_csv)
-    df_pipes = pd.read_csv(pipe_csv)
-    df_leaks = pd.read_csv(leak_csv)
+# Load file for nodes/pipes/assets/leaks
+def load_layer(name):
+    st.sidebar.markdown(f"### {name}")
+    shapefiles = st.sidebar.file_uploader(f"Upload {name} Shapefile Set", type=["shp", "shx", "dbf", "prj", "cpg", "qmd"], accept_multiple_files=True, key=f"{name}_shp")
+    csv = st.sidebar.file_uploader(f"Or upload {name} CSV", type="csv", key=f"{name}_csv")
 
+    gdf = None
+    if shapefiles:
+        try:
+            gdf = load_shapefile(shapefiles)
+            st.sidebar.success(f"{name} shapefile loaded.")
+        except Exception as e:
+            st.sidebar.error(f"Failed to load {name} shapefile: {e}")
+    elif csv:
+        try:
+            df = pd.read_csv(csv)
+            if name == "Nodes":
+                gdf = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df.XCoord, df.YCoord), crs="EPSG:27700").to_crs("EPSG:4326")
+            elif name == "Leaks":
+                gdf = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df.XCoord, df.YCoord), crs="EPSG:27700").to_crs("EPSG:4326")
+            elif name == "Assets":
+                gdf = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df.XCoord, df.YCoord), crs="EPSG:27700").to_crs("EPSG:4326")
+            elif name == "Pipes":
+                # Build pipes from CSV StartID/EndID
+                return "CSV_PIPE"  # signal to handle in custom logic
+            st.sidebar.success(f"{name} CSV loaded.")
+        except Exception as e:
+            st.sidebar.error(f"Failed to load {name} CSV: {e}")
+    return gdf
+
+# Create pipe GeoDataFrame from CSV
+def build_pipe_gdf_from_csv(df_pipes, node_gdf):
+    node_map = {str(row.NodeID): row for _, row in node_gdf.iterrows()}
     current_year = datetime.now().year
+    records = []
 
-    node_gdf = gpd.GeoDataFrame(df_nodes, geometry=gpd.points_from_xy(df_nodes.XCoord, df_nodes.YCoord), crs=original_crs).to_crs("EPSG:4326")
-    node_map = {str(row.NodeID): row for idx, row in node_gdf.iterrows()}
-
-    pipe_records = []
     for _, row in df_pipes.iterrows():
-        start_node = node_map.get(str(row["StartID"]))
-        end_node = node_map.get(str(row["EndID"]))
-        if start_node is not None and end_node is not None:
+        start = node_map.get(str(row["StartID"]))
+        end = node_map.get(str(row["EndID"]))
+        if start is not None and end is not None:
             try:
                 year_laid = int(row["Age"])
-                pipe_age = current_year - year_laid
-            except (ValueError, TypeError):
+                age = current_year - year_laid
+            except:
                 continue
-            pipe_records.append({
+            records.append({
                 "pipe_id": row["PipeID"],
-                "geometry": LineString([start_node.geometry, end_node.geometry]),
-                "Age": pipe_age,
-                "Material": row["Material"]
+                "geometry": LineString([start.geometry, end.geometry]),
+                "Age": age,
+                "Material": row.get("Material", "Unknown")
             })
 
-    pipe_gdf = gpd.GeoDataFrame(pipe_records, crs="EPSG:4326")
+    return gpd.GeoDataFrame(records, crs="EPSG:4326")
 
-    df_leaks = df_leaks.dropna(subset=['XCoord', 'YCoord', 'DateReported'])
-    leak_gdf = gpd.GeoDataFrame(df_leaks, geometry=gpd.points_from_xy(df_leaks['XCoord'], df_leaks['YCoord']), crs=original_crs).to_crs("EPSG:4326")
-
-    asset_gdf = None
-    if asset_csv:
-        df_assets = pd.read_csv(asset_csv)
-        asset_gdf = gpd.GeoDataFrame(df_assets, geometry=gpd.points_from_xy(df_assets.XCoord, df_assets.YCoord), crs=original_crs).to_crs("EPSG:4326")
-
-    return node_gdf, pipe_gdf, leak_gdf, asset_gdf
-
-# Layers creation with criticality
+# Create map layers
 def create_pipe_layer(pipe_gdf, criticality_on):
-    def pipe_color(row):
-        if criticality_on:
-            if row['Material'] == "Cast Iron" or row['Age'] > 50:
-                return [255, 0, 0]
-            elif row['Age'] > 30:
-                return [255, 165, 0]
-            else:
-                return [0, 255, 0]
-        return [0, 255, 255]
-
-    pipe_data = [{
-        "path": [[pt[0], pt[1]] for pt in row.geometry.coords],
-        "color": pipe_color(row),
-        "pipe_id": row.pipe_id,
-        "Age": row.Age,
-        "Material": row.Material
-    } for _, row in pipe_gdf.iterrows()]
-
-    return pdk.Layer("PathLayer", pipe_data, get_path="path", get_color="color", width_min_pixels=4, pickable=True)
-
-def create_leak_layer(leak_gdf):
-    leak_data = [{
-        "position": [geom.x, geom.y],
-        "DateReported": row.DateReported,
-        "LeakType": row.LeakType
-    } for geom, row in zip(leak_gdf.geometry, leak_gdf.itertuples())]
+    def get_color(row):
+        if not criticality_on:
+            return [0, 255, 255]
+        if row["Age"] > 50 or row["Material"].lower() == "cast iron":
+            return [255, 0, 0]
+        elif row["Age"] > 30:
+            return [255, 165, 0]
+        return [0, 255, 0]
 
     return pdk.Layer(
-        "ScatterplotLayer",
-        leak_data,
-        get_position="position",
-        get_fill_color=[255, 0, 0],
-        get_radius=30,
-        get_line_color=[255, 255, 255],
-        line_width_min_pixels=1,
-        pickable=True,
-        stroked=True,
+        "PathLayer",
+        [{
+            "path": list(row.geometry.coords),
+            "pipe_id": row["pipe_id"],
+            "Material": row["Material"],
+            "Age": row["Age"],
+            "color": get_color(row)
+        } for _, row in pipe_gdf.iterrows()],
+        get_path="path",
+        get_color="color",
+        width_min_pixels=4,
+        pickable=True
     )
 
 def create_asset_layer(asset_gdf):
-    asset_data = [{"position": [geom.x, geom.y], "AssetID": row.AssetID, "AssetType": row.AssetType} for geom, row in zip(asset_gdf.geometry, asset_gdf.itertuples())]
-    return pdk.Layer("ScatterplotLayer", asset_data, get_position="position", get_fill_color=[0, 255, 0], get_radius=10, pickable=True)
+    asset_gdf["lon"] = asset_gdf.geometry.x
+    asset_gdf["lat"] = asset_gdf.geometry.y
+    return pdk.Layer(
+        "ScatterplotLayer",
+        data=asset_gdf,
+        get_position=["lon", "lat"],
+        get_fill_color=[0, 200, 255],
+        get_radius=30,
+        pickable=True
+    )
 
-# Streamlit App
-st.title("DMA Dashboard: Leak, Asset & Pipe Criticality Visualization")
+def create_leak_layer(leak_gdf):
+    leak_gdf["lon"] = leak_gdf.geometry.x
+    leak_gdf["lat"] = leak_gdf.geometry.y
+    return pdk.Layer(
+        "ScatterplotLayer",
+        data=leak_gdf,
+        get_position=["lon", "lat"],
+        get_fill_color=[255, 0, 0],
+        get_radius=20,
+        pickable=True
+    )
 
-node_csv = st.file_uploader("Upload Node CSV", type=["csv"])
-pipe_csv = st.file_uploader("Upload Pipe CSV (column 'Age' should hold Year Laid)", type=["csv"])
-leak_csv = st.file_uploader("Upload Leak CSV (include 'DateReported')", type=["csv"])
-asset_csv = st.file_uploader("Upload Asset CSV", type=["csv"])
+# Main App
+st.title("💧 DMA Dashboard with Shapefile + CSV Upload Support")
 
-criticality_on = st.sidebar.checkbox("Toggle Pipe Criticality Visualization", value=False)
+criticality_on = st.sidebar.checkbox("Show Pipe Criticality", value=True)
+
+node_gdf = load_layer("Nodes")
+pipe_source = load_layer("Pipes")
+asset_gdf = load_layer("Assets")
+leak_gdf = load_layer("Leaks")
+
+pipe_gdf = None
+if pipe_source == "CSV_PIPE":
+    if node_gdf:
+        pipe_csv = st.sidebar.file_uploader("Upload Pipe CSV (for StartID/EndID method)", type="csv", key="pipe_logic_csv")
+        if pipe_csv:
+            df_pipes = pd.read_csv(pipe_csv)
+            pipe_gdf = build_pipe_gdf_from_csv(df_pipes, node_gdf)
+else:
+    pipe_gdf = pipe_source
 
 if st.button("Render Map"):
-    if not node_csv or not pipe_csv or not leak_csv or not asset_csv:
-        st.error("Please upload all CSV files.")
+    if node_gdf is None or pipe_gdf is None:
+        st.error("Please upload at least Nodes and Pipes.")
     else:
-        tmp_dir = tempfile.mkdtemp()
-        node_path = save_uploaded_file(node_csv, tmp_dir)
-        pipe_path = save_uploaded_file(pipe_csv, tmp_dir)
-        leak_path = save_uploaded_file(leak_csv, tmp_dir)
-        asset_path = save_uploaded_file(asset_csv, tmp_dir)
+        layers = [create_pipe_layer(pipe_gdf, criticality_on)]
+        if asset_gdf is not None:
+            layers.append(create_asset_layer(asset_gdf))
+        if leak_gdf is not None:
+            layers.append(create_leak_layer(leak_gdf))
 
-        node_gdf, pipe_gdf, leak_gdf, asset_gdf = build_gis_data(node_path, pipe_path, leak_path, asset_path)
+        view_state = pdk.ViewState(
+            latitude=node_gdf.geometry.y.mean(),
+            longitude=node_gdf.geometry.x.mean(),
+            zoom=13,
+            pitch=45
+        )
 
-        layers = [
-            create_pipe_layer(pipe_gdf, criticality_on),
-            create_asset_layer(asset_gdf),
-            create_leak_layer(leak_gdf)  # leaks on top
-        ]
-
-        view_state = pdk.ViewState(latitude=node_gdf.geometry.y.mean(), longitude=node_gdf.geometry.x.mean(), zoom=13, pitch=45)
-
-        deck_map = pdk.Deck(
+        deck = pdk.Deck(
             map_style="mapbox://styles/mapbox/dark-v10",
             initial_view_state=view_state,
             layers=layers,
-            tooltip={"html": "<b>{pipe_id}{AssetID}</b><br>Material: {Material}<br>Age: {Age} years<br><b>Leak:</b> {LeakType} ({DateReported})", "style": {"color": "white"}}
+            tooltip={
+                "html": """
+                <b>Pipe ID:</b> {pipe_id}<br>
+                <b>Material:</b> {Material}<br>
+                <b>Age:</b> {Age} years<br>
+                <b>Leak Type:</b> {LeakType}
+                """,
+                "style": {"color": "white"}
+            }
         )
 
-        st.pydeck_chart(deck_map, use_container_width=True)
-        st.success("DMA Dashboard rendered successfully!")
+        st.pydeck_chart(deck, use_container_width=True)
