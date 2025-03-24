@@ -33,8 +33,11 @@ def build_gis_data(node_csv, pipe_csv, leak_csv, asset_csv=None, original_crs="E
         start_node = node_map.get(str(row["StartID"]))
         end_node = node_map.get(str(row["EndID"]))
         if start_node is not None and end_node is not None:
-            year_laid = int(row["Age"])
-            pipe_age = current_year - year_laid
+            try:
+                year_laid = int(row["Age"])
+                pipe_age = current_year - year_laid
+            except (ValueError, TypeError):
+                continue
             pipe_records.append({
                 "pipe_id": row["PipeID"],
                 "geometry": LineString([start_node.geometry, end_node.geometry]),
