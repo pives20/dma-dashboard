@@ -5,15 +5,14 @@ import geopandas as gpd
 import pydeck as pdk
 from datetime import datetime
 
-# Page setup
 st.set_page_config(layout="wide")
-os.environ["MAPBOX_API_KEY"] = "your-mapbox-token-here"  # 🔁 Replace with your actual token
+os.environ["MAPBOX_API_KEY"] = "your-mapbox-token-here"  # Replace this with your Mapbox token
 
-# Initialize session state
+# Init session state
 if "show_map" not in st.session_state:
     st.session_state.show_map = False
 
-# Load shapefile
+# Load shapefile helper
 def load_shapefile(files, expected_geom):
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -24,8 +23,7 @@ def load_shapefile(files, expected_geom):
             if not shp_path:
                 st.sidebar.error("Missing .shp file.")
                 return None
-            full_path = os.path.join(tmpdir, shp_path[0])
-            gdf = gpd.read_file(full_path)
+            gdf = gpd.read_file(os.path.join(tmpdir, shp_path[0]))
 
             if expected_geom == "Line" and not gdf.geom_type.isin(["LineString", "MultiLineString"]).any():
                 st.sidebar.error("Shapefile does not contain Line geometries.")
@@ -77,7 +75,7 @@ def create_pipe_layer(pipe_gdf, criticality_on):
         pickable=True
     )
 
-# Point layer (assets, leaks)
+# Point layers (Assets, Leaks)
 def create_point_layer(gdf, color, radius, id_col, type_col, extra_col=None):
     gdf["lon"] = gdf.geometry.x
     gdf["lat"] = gdf.geometry.y
@@ -103,36 +101,34 @@ def create_point_layer(gdf, color, radius, id_col, type_col, extra_col=None):
         pickable=True
     )
 
-# Sidebar inputs
-st.title("💧 DMA Dashboard — Fullscreen Map Mode")
+# Sidebar controls
+st.title("💧 DMA Dashboard — Fullscreen Mode with Reset")
 
 criticality_on = st.sidebar.checkbox("Show Pipe Criticality", value=True)
 
 pipe_files = st.sidebar.file_uploader("Upload Pipe Shapefile", type=["shp", "shx", "dbf", "prj"], accept_multiple_files=True, key="pipes")
 asset_files = st.sidebar.file_uploader("Upload Asset Shapefile", type=["shp", "shx", "dbf", "prj"], accept_multiple_files=True, key="assets")
 leak_files = st.sidebar.file_uploader("Upload Leak Shapefile", type=["shp", "shx", "dbf", "prj"], accept_multiple_files=True, key="leaks")
-node_files = st.sidebar.file_uploader("Upload Node Shapefile (Optional)", type=["shp", "shx", "dbf", "prj"], accept_multiple_files=True, key="nodes")
+node_files = st.sidebar.file_uploader("Upload Node Shapefile (optional)", type=["shp", "shx", "dbf", "prj"], accept_multiple_files=True, key="nodes")
 
 pipe_gdf = load_shapefile(pipe_files, "Line") if pipe_files else None
 asset_gdf = load_shapefile(asset_files, "Point") if asset_files else None
 leak_gdf = load_shapefile(leak_files, "Point") if leak_files else None
 node_gdf = load_shapefile(node_files, "Point") if node_files else None
 
-# Render map or reset view
+# 🔘 UI: Either Upload or Show Map
 if not st.session_state.show_map:
     if st.button("Render Map"):
         if pipe_gdf is None:
             st.error("Please upload at least a Pipes shapefile.")
         else:
             st.session_state.show_map = True
-            st.experimental_rerun()
 else:
-    # Reset button
+    # 🔄 Reset map view
     if st.button("🔄 Reset View"):
         st.session_state.show_map = False
-        st.experimental_rerun()
 
-    # Fullscreen styling
+    # Fullscreen map styling
     st.markdown("""
         <style>
             [data-testid="stSidebar"] {display: none;}
@@ -148,7 +144,7 @@ else:
     if leak_gdf is not None:
         layers.append(create_point_layer(leak_gdf, [255, 0, 0], 25, "LeakID", "LeakType", "DateRepor"))
 
-    # Map centering
+    # View center
     if node_gdf is not None and not node_gdf.empty:
         lat = node_gdf.geometry.y.mean()
         lon = node_gdf.geometry.x.mean()
@@ -176,5 +172,5 @@ else:
         }
     )
 
-    # ✅ Show full screen map and pass Mapbox token
+    # Render fullscreen map with Mapbox token
     st.components.v1.html(deck.to_html(as_string=True, mapbox_key=os.environ["MAPBOX_API_KEY"]), height=1000)
