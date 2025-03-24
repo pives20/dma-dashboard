@@ -8,10 +8,9 @@ from shapely.geometry import LineString
 from datetime import datetime
 
 st.set_page_config(layout="wide")
-os.environ["MAPBOX_API_KEY"] = "your-mapbox-token-here"  # Replace with your token
+os.environ["MAPBOX_API_KEY"] = "your-mapbox-token-here"
 
-# Load shapefile from uploaded files
-def load_shapefile(files):
+def load_shapefile(files, expected_geom):
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             for file in files:
@@ -19,46 +18,24 @@ def load_shapefile(files):
                     f.write(file.read())
             shp_path = [f.name for f in files if f.name.endswith(".shp")]
             if not shp_path:
-                st.sidebar.error("No .shp file found.")
+                st.sidebar.error("Missing .shp file in upload.")
                 return None
-            shp_full_path = os.path.join(tmpdir, shp_path[0])
-            gdf = gpd.read_file(shp_full_path)
-            if gdf.empty:
-                st.sidebar.warning("Shapefile loaded, but it's empty.")
-            else:
-                st.sidebar.success(f"Loaded shapefile with {len(gdf)} records.")
+            full_path = os.path.join(tmpdir, shp_path[0])
+            gdf = gpd.read_file(full_path)
+
+            if expected_geom == "Line" and not gdf.geom_type.isin(["LineString", "MultiLineString"]).any():
+                st.sidebar.error("Shapefile does not contain Line geometries.")
+                return None
+            if expected_geom == "Point" and not gdf.geom_type.isin(["Point"]).any():
+                st.sidebar.error("Shapefile does not contain Point geometries.")
+                return None
+
+            st.sidebar.success(f"Loaded {len(gdf)} features.")
             return gdf
     except Exception as e:
-        st.sidebar.error(f"Failed to load shapefile: {e}")
+        st.sidebar.error(f"Shapefile error: {e}")
         return None
 
-# Upload interface for CSV or shapefile
-def load_layer(name, geom_type="Point"):
-    st.sidebar.markdown(f"### {name}")
-    shapefiles = st.sidebar.file_uploader(f"Upload {name} Shapefile Set", type=["shp", "shx", "dbf", "prj"], accept_multiple_files=True, key=f"{name}_shp")
-    csv = st.sidebar.file_uploader(f"Or upload {name} CSV", type="csv", key=f"{name}_csv")
-
-    gdf = None
-    if shapefiles:
-        gdf = load_shapefile(shapefiles)
-        if gdf is not None and geom_type == "Line" and not gdf.geom_type.isin(["LineString", "MultiLineString"]).any():
-            st.sidebar.error(f"{name} must contain Line geometry.")
-            return None
-        if gdf is not None and geom_type == "Point" and not gdf.geom_type.isin(["Point"]).any():
-            st.sidebar.error(f"{name} must contain Point geometry.")
-            return None
-    elif csv:
-        try:
-            df = pd.read_csv(csv)
-            if "XCoord" in df.columns and "YCoord" in df.columns:
-                gdf = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df.XCoord, df.YCoord), crs="EPSG:27700").to_crs("EPSG:4326")
-            else:
-                st.sidebar.error("CSV must contain 'XCoord' and 'YCoord' columns.")
-        except Exception as e:
-            st.sidebar.error(f"Error loading CSV: {e}")
-    return gdf
-
-# Create layers
 def create_pipe_layer(pipe_gdf, criticality_on):
     current_year = datetime.now().year
 
@@ -69,7 +46,7 @@ def create_pipe_layer(pipe_gdf, criticality_on):
             age = 0
         if not criticality_on:
             return [0, 255, 255]
-        if age > 50 or row.get("Material", "").lower() == "cast iron":
+        if age > 50 or str(row.get("Material", "")).lower() == "cast iron":
             return [255, 0, 0]
         elif age > 30:
             return [255, 165, 0]
@@ -107,19 +84,59 @@ def create_point_layer(gdf, color, radius):
         pickable=True
     )
 
-# Main app
-st.title("💧 DMA Dashboard — Pipes with Shapefile Support")
+# --------------------------
+# Sidebar File Uploads
+# --------------------------
+st.title("💧 DMA Dashboard – Shapefile Support for Pipes")
 
 criticality_on = st.sidebar.checkbox("Show Pipe Criticality", value=True)
 
-node_gdf = load_layer("Nodes")
-pipe_gdf = load_layer("Pipes", geom_type="Line")
-asset_gdf = load_layer("Assets")
-leak_gdf = load_layer("Leaks")
+st.sidebar.header("Upload Pipes")
+pipe_files = st.sidebar.file_uploader(
+    "Upload pipe shapefile components (shp, shx, dbf, prj)",
+    type=["shp", "shx", "dbf", "prj"],
+    accept_multiple_files=True,
+    key="pipes"
+)
 
+st.sidebar.header("Upload Nodes")
+node_files = st.sidebar.file_uploader(
+    "Upload node shapefile (point)",
+    type=["shp", "shx", "dbf", "prj"],
+    accept_multiple_files=True,
+    key="nodes"
+)
+
+st.sidebar.header("Upload Assets")
+asset_files = st.sidebar.file_uploader(
+    "Upload asset shapefile (point)",
+    type=["shp", "shx", "dbf", "prj"],
+    accept_multiple_files=True,
+    key="assets"
+)
+
+st.sidebar.header("Upload Leaks")
+leak_files = st.sidebar.file_uploader(
+    "Upload leak shapefile (point)",
+    type=["shp", "shx", "dbf", "prj"],
+    accept_multiple_files=True,
+    key="leaks"
+)
+
+# --------------------------
+# Load Layers
+# --------------------------
+pipe_gdf = load_shapefile(pipe_files, "Line") if pipe_files else None
+node_gdf = load_shapefile(node_files, "Point") if node_files else None
+asset_gdf = load_shapefile(asset_files, "Point") if asset_files else None
+leak_gdf = load_shapefile(leak_files, "Point") if leak_files else None
+
+# --------------------------
+# Render Map
+# --------------------------
 if st.button("Render Map"):
     if node_gdf is None or pipe_gdf is None:
-        st.error("Please upload at least Nodes and Pipes.")
+        st.error("Please upload both Pipes and Nodes shapefiles.")
     else:
         layers = [create_pipe_layer(pipe_gdf, criticality_on)]
         if asset_gdf is not None:
@@ -139,7 +156,11 @@ if st.button("Render Map"):
             initial_view_state=view,
             layers=layers,
             tooltip={
-                "html": "<b>Pipe ID:</b> {pipe_id}<br><b>Material:</b> {Material}<br><b>Age:</b> {Age}",
+                "html": """
+                    <b>Pipe ID:</b> {pipe_id}<br>
+                    <b>Material:</b> {Material}<br>
+                    <b>Age:</b> {Age}
+                """,
                 "style": {"color": "white"}
             }
         ))
