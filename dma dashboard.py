@@ -5,6 +5,7 @@ import geopandas as gpd
 import pydeck as pdk
 import tempfile
 from shapely.geometry import LineString
+from datetime import datetime
 
 os.environ["MAPBOX_API_KEY"] = "pk.eyJ1IjoicGl2ZXMiLCJhIjoiY204bGVweHY5MTFnZDJscXluOTJ1OHI5OCJ9.3BHtAPkRsjGbwgNykec4VA"
 
@@ -22,6 +23,8 @@ def build_gis_data(node_csv, pipe_csv, leak_csv, asset_csv=None, original_crs="E
     df_pipes = pd.read_csv(pipe_csv)
     df_leaks = pd.read_csv(leak_csv)
 
+    current_year = datetime.now().year
+
     node_gdf = gpd.GeoDataFrame(df_nodes, geometry=gpd.points_from_xy(df_nodes.XCoord, df_nodes.YCoord), crs=original_crs).to_crs("EPSG:4326")
     node_map = {str(row.NodeID): row for idx, row in node_gdf.iterrows()}
 
@@ -30,10 +33,12 @@ def build_gis_data(node_csv, pipe_csv, leak_csv, asset_csv=None, original_crs="E
         start_node = node_map.get(str(row["StartID"]))
         end_node = node_map.get(str(row["EndID"]))
         if start_node is not None and end_node is not None:
+            year_laid = row["YearLaid"]  # Make sure this matches your CSV
+            pipe_age = current_year - int(year_laid)
             pipe_records.append({
                 "pipe_id": row["PipeID"],
                 "geometry": LineString([start_node.geometry, end_node.geometry]),
-                "Age": row["Age"],
+                "Age": pipe_age,
                 "Material": row["Material"]
             })
 
@@ -83,7 +88,7 @@ def create_asset_layer(asset_gdf):
 st.title("DMA Dashboard: Leak, Asset & Pipe Criticality Visualization")
 
 node_csv = st.file_uploader("Upload Node CSV", type=["csv"])
-pipe_csv = st.file_uploader("Upload Pipe CSV (include 'Age' and 'Material')", type=["csv"])
+pipe_csv = st.file_uploader("Upload Pipe CSV (include 'YearLaid' and 'Material')", type=["csv"])
 leak_csv = st.file_uploader("Upload Leak CSV (include 'Year')", type=["csv"])
 asset_csv = st.file_uploader("Upload Asset CSV", type=["csv"])
 
