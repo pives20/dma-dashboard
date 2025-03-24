@@ -33,8 +33,8 @@ def build_gis_data(node_csv, pipe_csv, leak_csv, asset_csv=None, original_crs="E
         start_node = node_map.get(str(row["StartID"]))
         end_node = node_map.get(str(row["EndID"]))
         if start_node is not None and end_node is not None:
-            year_laid = row["YearLaid"]  # Make sure this matches your CSV
-            pipe_age = current_year - int(year_laid)
+            year_laid = int(row["Age"])
+            pipe_age = current_year - year_laid
             pipe_records.append({
                 "pipe_id": row["PipeID"],
                 "geometry": LineString([start_node.geometry, end_node.geometry]),
@@ -88,7 +88,7 @@ def create_asset_layer(asset_gdf):
 st.title("DMA Dashboard: Leak, Asset & Pipe Criticality Visualization")
 
 node_csv = st.file_uploader("Upload Node CSV", type=["csv"])
-pipe_csv = st.file_uploader("Upload Pipe CSV (include 'YearLaid' and 'Material')", type=["csv"])
+pipe_csv = st.file_uploader("Upload Pipe CSV (column 'Age' should hold Year Laid)", type=["csv"])
 leak_csv = st.file_uploader("Upload Leak CSV (include 'Year')", type=["csv"])
 asset_csv = st.file_uploader("Upload Asset CSV", type=["csv"])
 
