@@ -5,8 +5,13 @@ import geopandas as gpd
 import pydeck as pdk
 from datetime import datetime
 
+# Page setup
 st.set_page_config(layout="wide")
-os.environ["MAPBOX_API_KEY"] = "your-mapbox-token-here"  # Replace with your actual token
+os.environ["MAPBOX_API_KEY"] = "your-mapbox-token-here"  # 🔁 Replace with your actual token
+
+# Initialize session state
+if "show_map" not in st.session_state:
+    st.session_state.show_map = False
 
 # Load shapefile
 def load_shapefile(files, expected_geom):
@@ -35,7 +40,7 @@ def load_shapefile(files, expected_geom):
         st.sidebar.error(f"Error loading shapefile: {e}")
         return None
 
-# Pipes
+# Pipe layer
 def create_pipe_layer(pipe_gdf, criticality_on):
     current_year = datetime.now().year
 
@@ -72,7 +77,7 @@ def create_pipe_layer(pipe_gdf, criticality_on):
         pickable=True
     )
 
-# Points
+# Point layer (assets, leaks)
 def create_point_layer(gdf, color, radius, id_col, type_col, extra_col=None):
     gdf["lon"] = gdf.geometry.x
     gdf["lat"] = gdf.geometry.y
@@ -98,8 +103,8 @@ def create_point_layer(gdf, color, radius, id_col, type_col, extra_col=None):
         pickable=True
     )
 
-# UI
-st.title("💧 DMA Dashboard – Fullscreen Map Mode")
+# Sidebar inputs
+st.title("💧 DMA Dashboard — Fullscreen Map Mode")
 
 criticality_on = st.sidebar.checkbox("Show Pipe Criticality", value=True)
 
@@ -113,53 +118,63 @@ asset_gdf = load_shapefile(asset_files, "Point") if asset_files else None
 leak_gdf = load_shapefile(leak_files, "Point") if leak_files else None
 node_gdf = load_shapefile(node_files, "Point") if node_files else None
 
-# Render
-if st.button("Render Map"):
-    if pipe_gdf is None:
-        st.error("Please upload at least a Pipes shapefile.")
-    else:
-        layers = [create_pipe_layer(pipe_gdf, criticality_on)]
-        if asset_gdf is not None:
-            layers.append(create_point_layer(asset_gdf, [0, 200, 255], 40, "AssetID", "AssetType"))
-        if leak_gdf is not None:
-            layers.append(create_point_layer(leak_gdf, [255, 0, 0], 25, "LeakID", "LeakType", "DateRepor"))
-
-        # Determine map center
-        if node_gdf is not None and not node_gdf.empty:
-            lat = node_gdf.geometry.y.mean()
-            lon = node_gdf.geometry.x.mean()
-        elif pipe_gdf is not None and not pipe_gdf.empty:
-            lat = pipe_gdf.geometry.centroid.y.mean()
-            lon = pipe_gdf.geometry.centroid.x.mean()
+# Render map or reset view
+if not st.session_state.show_map:
+    if st.button("Render Map"):
+        if pipe_gdf is None:
+            st.error("Please upload at least a Pipes shapefile.")
         else:
-            lat, lon = 0, 0
+            st.session_state.show_map = True
+            st.experimental_rerun()
+else:
+    # Reset button
+    if st.button("🔄 Reset View"):
+        st.session_state.show_map = False
+        st.experimental_rerun()
 
-        # ✅ Fullscreen styling
-        fullscreen_css = """
+    # Fullscreen styling
+    st.markdown("""
         <style>
             [data-testid="stSidebar"] {display: none;}
             [data-testid="stHeader"] {display: none;}
             .block-container {padding: 0rem;}
         </style>
-        """
-        st.markdown(fullscreen_css, unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
-        # ✅ Fullscreen Map
-        deck = pdk.Deck(
-            map_style="mapbox://styles/mapbox/dark-v10",
-            initial_view_state=pdk.ViewState(latitude=lat, longitude=lon, zoom=13, pitch=45),
-            layers=layers,
-            tooltip={
-                "html": """
-                    <b>Pipe ID:</b> {pipe_id}<br>
-                    <b>Material:</b> {Material}<br>
-                    <b>Age:</b> {Age}<br>
-                    <b>ID:</b> {id}<br>
-                    <b>Type:</b> {type}<br>
-                    <b>Date:</b> {extra}
-                """,
-                "style": {"color": "white"}
-            }
-        )
+    # Build layers
+    layers = [create_pipe_layer(pipe_gdf, criticality_on)]
+    if asset_gdf is not None:
+        layers.append(create_point_layer(asset_gdf, [0, 200, 255], 40, "AssetID", "AssetType"))
+    if leak_gdf is not None:
+        layers.append(create_point_layer(leak_gdf, [255, 0, 0], 25, "LeakID", "LeakType", "DateRepor"))
 
-        st.components.v1.html(deck.to_html(as_string=True), height=1000)
+    # Map centering
+    if node_gdf is not None and not node_gdf.empty:
+        lat = node_gdf.geometry.y.mean()
+        lon = node_gdf.geometry.x.mean()
+    elif pipe_gdf is not None and not pipe_gdf.empty:
+        lat = pipe_gdf.geometry.centroid.y.mean()
+        lon = pipe_gdf.geometry.centroid.x.mean()
+    else:
+        lat, lon = 0, 0
+
+    # Deck map
+    deck = pdk.Deck(
+        map_style="mapbox://styles/mapbox/dark-v10",
+        initial_view_state=pdk.ViewState(latitude=lat, longitude=lon, zoom=13, pitch=45),
+        layers=layers,
+        tooltip={
+            "html": """
+                <b>Pipe ID:</b> {pipe_id}<br>
+                <b>Material:</b> {Material}<br>
+                <b>Age:</b> {Age}<br>
+                <b>ID:</b> {id}<br>
+                <b>Type:</b> {type}<br>
+                <b>Date:</b> {extra}
+            """,
+            "style": {"color": "white"}
+        }
+    )
+
+    # ✅ Show full screen map and pass Mapbox token
+    st.components.v1.html(deck.to_html(as_string=True, mapbox_key=os.environ["MAPBOX_API_KEY"]), height=1000)
