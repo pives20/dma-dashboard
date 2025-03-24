@@ -8,9 +8,9 @@ from shapely.geometry import LineString
 from datetime import datetime
 
 st.set_page_config(layout="wide")
-os.environ["MAPBOX_API_KEY"] = "your-mapbox-token-here"  # Replace with your token
+os.environ["MAPBOX_API_KEY"] = "your-mapbox-token-here"  # Replace with your actual Mapbox token
 
-# Utility to load shapefiles
+# Load shapefile components
 def load_shapefile(files):
     with tempfile.TemporaryDirectory() as tmpdir:
         for file in files:
@@ -19,7 +19,7 @@ def load_shapefile(files):
         shp_path = [f.name for f in files if f.name.endswith(".shp")][0]
         return gpd.read_file(os.path.join(tmpdir, shp_path))
 
-# Load file for nodes/pipes/assets/leaks
+# Upload handler
 def load_layer(name):
     st.sidebar.markdown(f"### {name}")
     shapefiles = st.sidebar.file_uploader(f"Upload {name} Shapefile Set", type=["shp", "shx", "dbf", "prj", "cpg", "qmd"], accept_multiple_files=True, key=f"{name}_shp")
@@ -42,14 +42,13 @@ def load_layer(name):
             elif name == "Assets":
                 gdf = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df.XCoord, df.YCoord), crs="EPSG:27700").to_crs("EPSG:4326")
             elif name == "Pipes":
-                # Build pipes from CSV StartID/EndID
-                return "CSV_PIPE"  # signal to handle in custom logic
+                return "CSV_PIPE"
             st.sidebar.success(f"{name} CSV loaded.")
         except Exception as e:
             st.sidebar.error(f"Failed to load {name} CSV: {e}")
     return gdf
 
-# Create pipe GeoDataFrame from CSV
+# Build pipe geometries from CSV
 def build_pipe_gdf_from_csv(df_pipes, node_gdf):
     node_map = {str(row.NodeID): row for _, row in node_gdf.iterrows()}
     current_year = datetime.now().year
@@ -61,19 +60,19 @@ def build_pipe_gdf_from_csv(df_pipes, node_gdf):
         if start is not None and end is not None:
             try:
                 year_laid = int(row["Age"])
-                age = current_year - year_laid
+                pipe_age = current_year - year_laid
             except:
                 continue
             records.append({
                 "pipe_id": row["PipeID"],
                 "geometry": LineString([start.geometry, end.geometry]),
-                "Age": age,
+                "Age": pipe_age,
                 "Material": row.get("Material", "Unknown")
             })
 
     return gpd.GeoDataFrame(records, crs="EPSG:4326")
 
-# Create map layers
+# Layer creators
 def create_pipe_layer(pipe_gdf, criticality_on):
     def get_color(row):
         if not criticality_on:
@@ -123,8 +122,8 @@ def create_leak_layer(leak_gdf):
         pickable=True
     )
 
-# Main App
-st.title("💧 DMA Dashboard with Shapefile + CSV Upload Support")
+# Main
+st.title("💧 DMA Dashboard with Shapefile + CSV Support")
 
 criticality_on = st.sidebar.checkbox("Show Pipe Criticality", value=True)
 
@@ -134,12 +133,16 @@ asset_gdf = load_layer("Assets")
 leak_gdf = load_layer("Leaks")
 
 pipe_gdf = None
-if pipe_source == "CSV_PIPE":
-    if node_gdf:
-        pipe_csv = st.sidebar.file_uploader("Upload Pipe CSV (for StartID/EndID method)", type="csv", key="pipe_logic_csv")
+if isinstance(pipe_source, str) and pipe_source == "CSV_PIPE":
+    if node_gdf is not None:
+        pipe_csv = st.sidebar.file_uploader("Upload Pipe CSV (StartID/EndID, Age, Material)", type="csv", key="pipe_csv_logic")
         if pipe_csv:
-            df_pipes = pd.read_csv(pipe_csv)
-            pipe_gdf = build_pipe_gdf_from_csv(df_pipes, node_gdf)
+            try:
+                df_pipes = pd.read_csv(pipe_csv)
+                pipe_gdf = build_pipe_gdf_from_csv(df_pipes, node_gdf)
+                st.sidebar.success("Pipe geometry built from CSV.")
+            except Exception as e:
+                st.sidebar.error(f"Error building pipes: {e}")
 else:
     pipe_gdf = pipe_source
 
@@ -166,10 +169,10 @@ if st.button("Render Map"):
             layers=layers,
             tooltip={
                 "html": """
-                <b>Pipe ID:</b> {pipe_id}<br>
-                <b>Material:</b> {Material}<br>
-                <b>Age:</b> {Age} years<br>
-                <b>Leak Type:</b> {LeakType}
+                    <b>Pipe ID:</b> {pipe_id}<br>
+                    <b>Material:</b> {Material}<br>
+                    <b>Age:</b> {Age} years<br>
+                    <b>Leak Type:</b> {LeakType}
                 """,
                 "style": {"color": "white"}
             }
