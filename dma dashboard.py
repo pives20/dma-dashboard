@@ -85,7 +85,18 @@ def create_leak_layer(leak_gdf):
         "DateReported": row.DateReported,
         "LeakType": row.LeakType
     } for geom, row in zip(leak_gdf.geometry, leak_gdf.itertuples())]
-    return pdk.Layer("ScatterplotLayer", leak_data, get_position="position", get_fill_color=[255, 0, 0], get_radius=10, pickable=True)
+
+    return pdk.Layer(
+        "ScatterplotLayer",
+        leak_data,
+        get_position="position",
+        get_fill_color=[255, 0, 0],
+        get_radius=30,
+        get_line_color=[255, 255, 255],
+        line_width_min_pixels=1,
+        pickable=True,
+        stroked=True,
+    )
 
 def create_asset_layer(asset_gdf):
     asset_data = [{"position": [geom.x, geom.y], "AssetID": row.AssetID, "AssetType": row.AssetType} for geom, row in zip(asset_gdf.geometry, asset_gdf.itertuples())]
@@ -115,8 +126,8 @@ if st.button("Render Map"):
 
         layers = [
             create_pipe_layer(pipe_gdf, criticality_on),
-            create_leak_layer(leak_gdf),
-            create_asset_layer(asset_gdf)
+            create_asset_layer(asset_gdf),
+            create_leak_layer(leak_gdf)  # leaks on top
         ]
 
         view_state = pdk.ViewState(latitude=node_gdf.geometry.y.mean(), longitude=node_gdf.geometry.x.mean(), zoom=13, pitch=45)
