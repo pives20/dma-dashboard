@@ -6,9 +6,9 @@ import pydeck as pdk
 from datetime import datetime
 
 st.set_page_config(layout="wide")
-os.environ["MAPBOX_API_KEY"] = "your-mapbox-token-here"  # Replace with your token
+os.environ["MAPBOX_API_KEY"] = "your-mapbox-token-here"  # Replace with your actual token
 
-# Function to load shapefiles
+# Load shapefile
 def load_shapefile(files, expected_geom):
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -35,7 +35,7 @@ def load_shapefile(files, expected_geom):
         st.sidebar.error(f"Error loading shapefile: {e}")
         return None
 
-# ✅ Updated pipe layer with working tooltips
+# Pipes
 def create_pipe_layer(pipe_gdf, criticality_on):
     current_year = datetime.now().year
 
@@ -72,7 +72,7 @@ def create_pipe_layer(pipe_gdf, criticality_on):
         pickable=True
     )
 
-# Generic point layer (Assets, Leaks)
+# Points
 def create_point_layer(gdf, color, radius, id_col, type_col, extra_col=None):
     gdf["lon"] = gdf.geometry.x
     gdf["lat"] = gdf.geometry.y
@@ -98,15 +98,15 @@ def create_point_layer(gdf, color, radius, id_col, type_col, extra_col=None):
         pickable=True
     )
 
-# UI Uploads
-st.title("💧 DMA Dashboard with Tooltips")
+# UI
+st.title("💧 DMA Dashboard – Fullscreen Map Mode")
 
 criticality_on = st.sidebar.checkbox("Show Pipe Criticality", value=True)
 
-pipe_files = st.sidebar.file_uploader("Upload Pipe Shapefile Components", type=["shp", "shx", "dbf", "prj"], accept_multiple_files=True, key="pipes")
+pipe_files = st.sidebar.file_uploader("Upload Pipe Shapefile", type=["shp", "shx", "dbf", "prj"], accept_multiple_files=True, key="pipes")
 asset_files = st.sidebar.file_uploader("Upload Asset Shapefile", type=["shp", "shx", "dbf", "prj"], accept_multiple_files=True, key="assets")
 leak_files = st.sidebar.file_uploader("Upload Leak Shapefile", type=["shp", "shx", "dbf", "prj"], accept_multiple_files=True, key="leaks")
-node_files = st.sidebar.file_uploader("Upload Node Shapefile (optional)", type=["shp", "shx", "dbf", "prj"], accept_multiple_files=True, key="nodes")
+node_files = st.sidebar.file_uploader("Upload Node Shapefile (Optional)", type=["shp", "shx", "dbf", "prj"], accept_multiple_files=True, key="nodes")
 
 pipe_gdf = load_shapefile(pipe_files, "Line") if pipe_files else None
 asset_gdf = load_shapefile(asset_files, "Point") if asset_files else None
@@ -124,7 +124,7 @@ if st.button("Render Map"):
         if leak_gdf is not None:
             layers.append(create_point_layer(leak_gdf, [255, 0, 0], 25, "LeakID", "LeakType", "DateRepor"))
 
-        # Map center logic
+        # Determine map center
         if node_gdf is not None and not node_gdf.empty:
             lat = node_gdf.geometry.y.mean()
             lon = node_gdf.geometry.x.mean()
@@ -134,11 +134,20 @@ if st.button("Render Map"):
         else:
             lat, lon = 0, 0
 
-        # Build pydeck map
-        view = pdk.ViewState(latitude=lat, longitude=lon, zoom=13, pitch=45)
-        st.pydeck_chart(pdk.Deck(
+        # ✅ Fullscreen styling
+        fullscreen_css = """
+        <style>
+            [data-testid="stSidebar"] {display: none;}
+            [data-testid="stHeader"] {display: none;}
+            .block-container {padding: 0rem;}
+        </style>
+        """
+        st.markdown(fullscreen_css, unsafe_allow_html=True)
+
+        # ✅ Fullscreen Map
+        deck = pdk.Deck(
             map_style="mapbox://styles/mapbox/dark-v10",
-            initial_view_state=view,
+            initial_view_state=pdk.ViewState(latitude=lat, longitude=lon, zoom=13, pitch=45),
             layers=layers,
             tooltip={
                 "html": """
@@ -151,4 +160,6 @@ if st.button("Render Map"):
                 """,
                 "style": {"color": "white"}
             }
-        ))
+        )
+
+        st.components.v1.html(deck.to_html(as_string=True), height=1000)
