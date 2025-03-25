@@ -5,14 +5,14 @@ import geopandas as gpd
 import pydeck as pdk
 from datetime import datetime
 
+# Setup
 st.set_page_config(layout="wide")
-os.environ["MAPBOX_API_KEY"] = "your-mapbox-token-here"  # Replace this with your Mapbox token
+os.environ["MAPBOX_API_KEY"] = "your-mapbox-token-here"  # ⬅ Replace this!
 
-# Init session state
 if "show_map" not in st.session_state:
     st.session_state.show_map = False
 
-# Load shapefile helper
+# Load shapefile
 def load_shapefile(files, expected_geom):
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -26,16 +26,15 @@ def load_shapefile(files, expected_geom):
             gdf = gpd.read_file(os.path.join(tmpdir, shp_path[0]))
 
             if expected_geom == "Line" and not gdf.geom_type.isin(["LineString", "MultiLineString"]).any():
-                st.sidebar.error("Shapefile does not contain Line geometries.")
+                st.sidebar.error("Expected Line geometry.")
                 return None
             if expected_geom == "Point" and not gdf.geom_type.isin(["Point"]).any():
-                st.sidebar.error("Shapefile does not contain Point geometries.")
+                st.sidebar.error("Expected Point geometry.")
                 return None
 
-            st.sidebar.success(f"Loaded {len(gdf)} {expected_geom} features.")
             return gdf
     except Exception as e:
-        st.sidebar.error(f"Error loading shapefile: {e}")
+        st.sidebar.error(f"Shapefile error: {e}")
         return None
 
 # Pipe layer
@@ -75,7 +74,7 @@ def create_pipe_layer(pipe_gdf, criticality_on):
         pickable=True
     )
 
-# Point layers (Assets, Leaks)
+# Point layer
 def create_point_layer(gdf, color, radius, id_col, type_col, extra_col=None):
     gdf["lon"] = gdf.geometry.x
     gdf["lat"] = gdf.geometry.y
@@ -101,22 +100,22 @@ def create_point_layer(gdf, color, radius, id_col, type_col, extra_col=None):
         pickable=True
     )
 
-# Sidebar controls
-st.title("💧 DMA Dashboard — Fullscreen Mode with Reset")
+# UI
+st.title("💧 DMA Dashboard — Fullscreen Map Mode")
 
 criticality_on = st.sidebar.checkbox("Show Pipe Criticality", value=True)
 
-pipe_files = st.sidebar.file_uploader("Upload Pipe Shapefile", type=["shp", "shx", "dbf", "prj"], accept_multiple_files=True, key="pipes")
-asset_files = st.sidebar.file_uploader("Upload Asset Shapefile", type=["shp", "shx", "dbf", "prj"], accept_multiple_files=True, key="assets")
-leak_files = st.sidebar.file_uploader("Upload Leak Shapefile", type=["shp", "shx", "dbf", "prj"], accept_multiple_files=True, key="leaks")
-node_files = st.sidebar.file_uploader("Upload Node Shapefile (optional)", type=["shp", "shx", "dbf", "prj"], accept_multiple_files=True, key="nodes")
+pipe_files = st.sidebar.file_uploader("Upload Pipes", type=["shp", "shx", "dbf", "prj"], accept_multiple_files=True, key="pipes")
+asset_files = st.sidebar.file_uploader("Upload Assets", type=["shp", "shx", "dbf", "prj"], accept_multiple_files=True, key="assets")
+leak_files = st.sidebar.file_uploader("Upload Leaks", type=["shp", "shx", "dbf", "prj"], accept_multiple_files=True, key="leaks")
+node_files = st.sidebar.file_uploader("Upload Nodes (optional)", type=["shp", "shx", "dbf", "prj"], accept_multiple_files=True, key="nodes")
 
 pipe_gdf = load_shapefile(pipe_files, "Line") if pipe_files else None
 asset_gdf = load_shapefile(asset_files, "Point") if asset_files else None
 leak_gdf = load_shapefile(leak_files, "Point") if leak_files else None
 node_gdf = load_shapefile(node_files, "Point") if node_files else None
 
-# 🔘 UI: Either Upload or Show Map
+# Render map
 if not st.session_state.show_map:
     if st.button("Render Map"):
         if pipe_gdf is None:
@@ -124,11 +123,10 @@ if not st.session_state.show_map:
         else:
             st.session_state.show_map = True
 else:
-    # 🔄 Reset map view
     if st.button("🔄 Reset View"):
         st.session_state.show_map = False
 
-    # Fullscreen map styling
+    # Hide UI for fullscreen effect
     st.markdown("""
         <style>
             [data-testid="stSidebar"] {display: none;}
@@ -137,14 +135,14 @@ else:
         </style>
     """, unsafe_allow_html=True)
 
-    # Build layers
+    # Layers
     layers = [create_pipe_layer(pipe_gdf, criticality_on)]
     if asset_gdf is not None:
         layers.append(create_point_layer(asset_gdf, [0, 200, 255], 40, "AssetID", "AssetType"))
     if leak_gdf is not None:
         layers.append(create_point_layer(leak_gdf, [255, 0, 0], 25, "LeakID", "LeakType", "DateRepor"))
 
-    # View center
+    # Map center
     if node_gdf is not None and not node_gdf.empty:
         lat = node_gdf.geometry.y.mean()
         lon = node_gdf.geometry.x.mean()
@@ -154,23 +152,24 @@ else:
     else:
         lat, lon = 0, 0
 
-    # Deck map
-    deck = pdk.Deck(
-        map_style="mapbox://styles/mapbox/dark-v10",
-        initial_view_state=pdk.ViewState(latitude=lat, longitude=lon, zoom=13, pitch=45),
-        layers=layers,
-        tooltip={
-            "html": """
-                <b>Pipe ID:</b> {pipe_id}<br>
-                <b>Material:</b> {Material}<br>
-                <b>Age:</b> {Age}<br>
-                <b>ID:</b> {id}<br>
-                <b>Type:</b> {type}<br>
-                <b>Date:</b> {extra}
-            """,
-            "style": {"color": "white"}
-        }
-    )
+    view = pdk.ViewState(latitude=lat, longitude=lon, zoom=13, pitch=45)
 
-    # Render fullscreen map with Mapbox token
-    st.components.v1.html(deck.to_html(as_string=True, mapbox_key=os.environ["MAPBOX_API_KEY"]), height=1000)
+    st.pydeck_chart(
+        pdk.Deck(
+            map_style="mapbox://styles/mapbox/dark-v10",
+            initial_view_state=view,
+            layers=layers,
+            tooltip={
+                "html": """
+                    <b>Pipe ID:</b> {pipe_id}<br>
+                    <b>Material:</b> {Material}<br>
+                    <b>Age:</b> {Age}<br>
+                    <b>ID:</b> {id}<br>
+                    <b>Type:</b> {type}<br>
+                    <b>Date:</b> {extra}
+                """,
+                "style": {"color": "white"}
+            }
+        ),
+        use_container_width=True
+    )
