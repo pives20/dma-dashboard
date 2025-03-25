@@ -5,15 +5,14 @@ import geopandas as gpd
 import pydeck as pdk
 from datetime import datetime
 
-# Configure layout
+# ✅ Set up page and Mapbox token
 st.set_page_config(layout="wide")
-os.environ["MAPBOX_API_KEY"] = "your-mapbox-token-here"  # Replace with your token!
+os.environ["MAPBOX_API_KEY"] = "pk.eyJ1IjoicGl2ZXMiLCJhIjoiY204bGVweHY5MTFnZDJscXluOTJ1OHI5OCJ9.3BHtAPkRsjGbwgNykec4VA"
 
-# Init fullscreen state
 if "show_map" not in st.session_state:
     st.session_state.show_map = False
 
-# Function to load shapefiles
+# ✅ Shapefile loader with reprojection
 def load_shapefile(files, expected_geom):
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -24,24 +23,25 @@ def load_shapefile(files, expected_geom):
             if not shp_path:
                 st.sidebar.error("Missing .shp file.")
                 return None
-            gdf = gpd.read_file(os.path.join(tmpdir, shp_path[0]))
-
+            full_path = os.path.join(tmpdir, shp_path[0])
+            gdf = gpd.read_file(full_path)
+            gdf = gdf[gdf.geometry.notnull()]
+            if gdf.crs and gdf.crs.to_string() != "EPSG:4326":
+                gdf = gdf.to_crs("EPSG:4326")
             if expected_geom == "Line" and not gdf.geom_type.isin(["LineString", "MultiLineString"]).any():
                 st.sidebar.error("Expected Line geometry.")
                 return None
             if expected_geom == "Point" and not gdf.geom_type.isin(["Point"]).any():
                 st.sidebar.error("Expected Point geometry.")
                 return None
-
             return gdf
     except Exception as e:
         st.sidebar.error(f"Shapefile error: {e}")
         return None
 
-# Pipe layer with criticality color
+# ✅ Pipes (with criticality color)
 def create_pipe_layer(pipe_gdf, criticality_on):
     current_year = datetime.now().year
-
     def color(row):
         try:
             age = current_year - int(row["Age"])
@@ -54,7 +54,6 @@ def create_pipe_layer(pipe_gdf, criticality_on):
         elif age > 30:
             return [255, 165, 0]
         return [0, 255, 0]
-
     features = []
     for _, row in pipe_gdf.iterrows():
         coords = list(row.geometry.coords)
@@ -65,7 +64,6 @@ def create_pipe_layer(pipe_gdf, criticality_on):
             "Age": row.get("Age", ""),
             "color": color(row)
         })
-
     return pdk.Layer(
         "PathLayer",
         features,
@@ -75,11 +73,10 @@ def create_pipe_layer(pipe_gdf, criticality_on):
         pickable=True
     )
 
-# Assets/Leaks layer
+# ✅ Assets / Leaks as points
 def create_point_layer(gdf, color, radius, id_col, type_col, extra_col=None):
     gdf["lon"] = gdf.geometry.x
     gdf["lat"] = gdf.geometry.y
-
     records = []
     for _, row in gdf.iterrows():
         rec = {
@@ -91,7 +88,6 @@ def create_point_layer(gdf, color, radius, id_col, type_col, extra_col=None):
         if extra_col:
             rec["extra"] = str(row.get(extra_col, ""))
         records.append(rec)
-
     return pdk.Layer(
         "ScatterplotLayer",
         data=records,
@@ -101,10 +97,9 @@ def create_point_layer(gdf, color, radius, id_col, type_col, extra_col=None):
         pickable=True
     )
 
-# App Title
-st.title("💧 DMA Dashboard – Qatium-Style Fullscreen")
+# ✅ UI
+st.title("💧 DMA Dashboard — Qatium-Style Fullscreen Map")
 
-# Sidebar Uploads
 criticality_on = st.sidebar.checkbox("Show Pipe Criticality", value=True)
 
 pipe_files = st.sidebar.file_uploader("Upload Pipes", type=["shp", "shx", "dbf", "prj"], accept_multiple_files=True, key="pipes")
@@ -117,7 +112,7 @@ asset_gdf = load_shapefile(asset_files, "Point") if asset_files else None
 leak_gdf = load_shapefile(leak_files, "Point") if leak_files else None
 node_gdf = load_shapefile(node_files, "Point") if node_files else None
 
-# Toggle map mode
+# ✅ Map toggle logic
 if not st.session_state.show_map:
     if st.button("Render Map"):
         if pipe_gdf is None:
@@ -125,11 +120,10 @@ if not st.session_state.show_map:
         else:
             st.session_state.show_map = True
 else:
-    # 🔄 Reset
     if st.button("🔄 Reset View"):
         st.session_state.show_map = False
 
-    # 💻 Qatium-style fullscreen layout
+    # ✅ Fullscreen CSS
     st.markdown("""
         <style>
             html, body, [data-testid="stAppViewContainer"], [data-testid="stVerticalBlock"] {
@@ -148,14 +142,14 @@ else:
         </style>
     """, unsafe_allow_html=True)
 
-    # Build layers
+    # ✅ Layer building
     layers = [create_pipe_layer(pipe_gdf, criticality_on)]
     if asset_gdf is not None:
         layers.append(create_point_layer(asset_gdf, [0, 200, 255], 40, "AssetID", "AssetType"))
     if leak_gdf is not None:
         layers.append(create_point_layer(leak_gdf, [255, 0, 0], 25, "LeakID", "LeakType", "DateRepor"))
 
-    # Map center logic
+    # ✅ Center map
     if node_gdf is not None and not node_gdf.empty:
         lat = node_gdf.geometry.y.mean()
         lon = node_gdf.geometry.x.mean()
@@ -165,25 +159,26 @@ else:
     else:
         lat, lon = 0, 0
 
-    # Show the map using pydeck
     view = pdk.ViewState(latitude=lat, longitude=lon, zoom=13, pitch=45)
 
-    deck = pdk.Deck(
-        map_style="mapbox://styles/mapbox/dark-v10",
-        initial_view_state=view,
-        layers=layers,
-        tooltip={
-            "html": """
-                <b>Pipe ID:</b> {pipe_id}<br>
-                <b>Material:</b> {Material}<br>
-                <b>Age:</b> {Age}<br>
-                <b>ID:</b> {id}<br>
-                <b>Type:</b> {type}<br>
-                <b>Date:</b> {extra}
-            """,
-            "style": {"color": "white"}
-        }
+    # ✅ Show map
+    st.pydeck_chart(
+        pdk.Deck(
+            map_style="mapbox://styles/mapbox/dark-v10",
+            initial_view_state=view,
+            layers=layers,
+            tooltip={
+                "html": """
+                    <b>Pipe ID:</b> {pipe_id}<br>
+                    <b>Material:</b> {Material}<br>
+                    <b>Age:</b> {Age}<br>
+                    <b>ID:</b> {id}<br>
+                    <b>Type:</b> {type}<br>
+                    <b>Date:</b> {extra}
+                """,
+                "style": {"color": "white"}
+            }
+        ),
+        height=1100,
+        use_container_width=True
     )
-
-    # Show full screen map
-    st.pydeck_chart(deck, height=1100, use_container_width=True)
