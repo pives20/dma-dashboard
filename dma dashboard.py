@@ -1,56 +1,31 @@
 import os
-import tempfile
 import streamlit as st
 import geopandas as gpd
 import pydeck as pdk
 from datetime import datetime
 
-# Set page config
+# Config
 st.set_page_config(layout="wide")
 os.environ["MAPBOX_API_KEY"] = "pk.eyJ1IjoicGl2ZXMiLCJhIjoiY204bGVweHY5MTFnZDJscXluOTJ1OHI5OCJ9.3BHtAPkRsjGbwgNykec4VA"
 
-# Track toggles in session
-if "layer_states" not in st.session_state:
-    st.session_state.layer_states = {
-        "Pipes": True,
-        "Assets": True,
-        "Leaks": True
-    }
-if "year_filter" not in st.session_state:
-    st.session_state.year_filter = datetime.now().year
+# Session states
+if "page" not in st.session_state:
+    st.session_state.page = "upload"
 
-# Floating control panel CSS
-st.markdown("""
-<style>
-.control-panel {
-    position: fixed;
-    top: 30px;
-    left: 30px;
-    background-color: #35354B;
-    padding: 20px;
-    border-radius: 8px;
-    z-index: 9999;
-    color: white;
-    font-family: 'Segoe UI', sans-serif;
-    box-shadow: 0px 0px 15px rgba(0,0,0,0.3);
-}
-.control-panel h4 {
-    margin-top: 0;
-    color: #FFFFFF;
-}
-.control-panel label {
-    color: #B4B4CA;
-    font-size: 14px;
-}
-</style>
-""", unsafe_allow_html=True)
+# App layout
+def show_upload_page():
+    st.title("📤 Upload DMA Files")
+    st.markdown("Upload your **pipes**, **assets**, **leaks**, and **valves** in GeoJSON format.")
 
-# File Uploads
-pipe_file = st.file_uploader("Upload Pipes (GeoJSON preferred)", type=["geojson"])
-asset_file = st.file_uploader("Upload Assets", type=["geojson"])
-leak_file = st.file_uploader("Upload Leaks", type=["geojson"])
+    st.session_state.pipes = st.file_uploader("Pipes (GeoJSON)", type=["geojson"], key="pipes")
+    st.session_state.assets = st.file_uploader("Assets (GeoJSON)", type=["geojson"], key="assets")
+    st.session_state.leaks = st.file_uploader("Leaks (GeoJSON)", type=["geojson"], key="leaks")
+    st.session_state.valves = st.file_uploader("Valves (GeoJSON)", type=["geojson"], key="valves")
 
-# Load GeoDataFrames
+    if st.button("🚀 Launch Dashboard"):
+        st.session_state.page = "dashboard"
+        st.experimental_rerun()
+
 def load_geojson(uploaded_file):
     if uploaded_file:
         gdf = gpd.read_file(uploaded_file)
@@ -59,96 +34,106 @@ def load_geojson(uploaded_file):
         return gdf[gdf.geometry.notnull()]
     return None
 
-pipe_gdf = load_geojson(pipe_file)
-asset_gdf = load_geojson(asset_file)
-leak_gdf = load_geojson(leak_file)
+def create_layer(gdf, layer_type):
+    if gdf is None:
+        return None
+    gdf["lon"] = gdf.geometry.x
+    gdf["lat"] = gdf.geometry.y
 
-# Floating Control Panel UI
-st.markdown("""
-<div class="control-panel">
-    <h4>🧭 Map Layers</h4>
-    <label><input type="checkbox" onchange="fetch('/_stcore/streamlit-update?Pipes='+this.checked)" checked> Pipes</label><br>
-    <label><input type="checkbox" onchange="fetch('/_stcore/streamlit-update?Assets='+this.checked)" checked> Assets</label><br>
-    <label><input type="checkbox" onchange="fetch('/_stcore/streamlit-update?Leaks='+this.checked)" checked> Leaks</label><br>
-    <hr style="border: 1px solid #4A4A68">
-    <label for="year">🕓 Leak Year Filter</label>
-</div>
-""", unsafe_allow_html=True)
+    if layer_type == "assets":
+        return pdk.Layer(
+            "ScatterplotLayer",
+            data=gdf,
+            get_position='[lon, lat]',
+            get_fill_color=[0, 200, 255],
+            get_radius=40,
+            pickable=True
+        )
+    if layer_type == "leaks":
+        gdf["year"] = pd.to_datetime(gdf.get("DateRepor"), errors="coerce").dt.year
+        year = st.slider("Leak Year", int(gdf["year"].min()), int(gdf["year"].max()), int(gdf["year"].max()))
+        gdf = gdf[gdf["year"] == year]
+        return pdk.Layer(
+            "ScatterplotLayer",
+            data=gdf,
+            get_position='[lon, lat]',
+            get_fill_color=[255, 0, 0],
+            get_radius=25,
+            pickable=True
+        )
+    if layer_type == "valves":
+        return pdk.Layer(
+            "ScatterplotLayer",
+            data=gdf,
+            get_position='[lon, lat]',
+            get_fill_color=[255, 255, 0],
+            get_radius=30,
+            pickable=True
+        )
+    return None
 
-# Streamlit timeline slider
-leak_years = []
-if leak_gdf is not None and "DateRepor" in leak_gdf.columns:
-    leak_gdf["year"] = pd.to_datetime(leak_gdf["DateRepor"], errors="coerce").dt.year
-    leak_years = leak_gdf["year"].dropna().astype(int).unique().tolist()
-    leak_years.sort()
-
-if leak_years:
-    year = st.slider("Select Leak Year", min_value=min(leak_years), max_value=max(leak_years), value=max(leak_years))
-    st.session_state.year_filter = year
-
-# Build Pydeck Layers
-layers = []
-
-if pipe_gdf is not None and st.session_state.layer_states["Pipes"]:
-    pipe_layer = pdk.Layer(
+def create_pipe_layer(gdf):
+    if gdf is None:
+        return None
+    features = []
+    for _, row in gdf.iterrows():
+        if row.geometry.type == "LineString":
+            coords = list(row.geometry.coords)
+            features.append({
+                "path": coords,
+                "pipe_id": str(row.get("PipeID", "")),
+                "Material": row.get("Material", ""),
+                "Age": row.get("Age", ""),
+            })
+    return pdk.Layer(
         "PathLayer",
-        data=[{
-            "path": list(geom.coords),
-            "pipe_id": str(row.get("PipeID", "")),
-            "Material": str(row.get("Material", "")),
-            "Age": row.get("Age", ""),
-        } for _, row in pipe_gdf.iterrows() if row.geometry.type == "LineString" for geom in [row.geometry]],
+        data=features,
         get_path="path",
-        get_width=5,
-        get_color=[0, 255, 255],
+        get_color=[75, 181, 190],  # #4BB5BE
+        get_width=4,
         pickable=True
     )
-    layers.append(pipe_layer)
 
-if asset_gdf is not None and st.session_state.layer_states["Assets"]:
-    asset_gdf["lon"] = asset_gdf.geometry.x
-    asset_gdf["lat"] = asset_gdf.geometry.y
-    asset_layer = pdk.Layer(
-        "ScatterplotLayer",
-        data=asset_gdf,
-        get_position='[lon, lat]',
-        get_radius=30,
-        get_fill_color=[0, 200, 255],
-        pickable=True
-    )
-    layers.append(asset_layer)
+def show_dashboard():
+    st.markdown("<style>footer, header, .stSidebar {display: none !important;}</style>", unsafe_allow_html=True)
 
-if leak_gdf is not None and st.session_state.layer_states["Leaks"]:
-    filtered_leaks = leak_gdf[leak_gdf["year"] == st.session_state.year_filter] if "year" in leak_gdf.columns else leak_gdf
-    filtered_leaks["lon"] = filtered_leaks.geometry.x
-    filtered_leaks["lat"] = filtered_leaks.geometry.y
-    leak_layer = pdk.Layer(
-        "ScatterplotLayer",
-        data=filtered_leaks,
-        get_position='[lon, lat]',
-        get_radius=20,
-        get_fill_color=[255, 0, 0],
-        pickable=True
-    )
-    layers.append(leak_layer)
+    st.markdown("""
+        <div style="position:absolute;top:30px;left:30px;z-index:9999;background:#35354B;padding:20px;border-radius:8px;color:white;">
+            <h4>🧭 Layers</h4>
+            <label><input type="checkbox" checked onchange="location.reload()"> Pipes</label><br>
+            <label><input type="checkbox" checked onchange="location.reload()"> Assets</label><br>
+            <label><input type="checkbox" checked onchange="location.reload()"> Leaks</label><br>
+            <label><input type="checkbox" checked onchange="location.reload()"> Valves</label><br>
+        </div>
+    """, unsafe_allow_html=True)
 
-# Map View
-if pipe_gdf is not None and not pipe_gdf.empty:
-    center = pipe_gdf.geometry.centroid.unary_union.centroid
-    view_state = pdk.ViewState(latitude=center.y, longitude=center.x, zoom=13, pitch=45)
+    pipe_gdf = load_geojson(st.session_state.get("pipes"))
+    asset_gdf = load_geojson(st.session_state.get("assets"))
+    leak_gdf = load_geojson(st.session_state.get("leaks"))
+    valve_gdf = load_geojson(st.session_state.get("valves"))
+
+    center = [51.5, -0.1]
+    if pipe_gdf is not None and not pipe_gdf.empty:
+        center = [pipe_gdf.geometry.centroid.y.mean(), pipe_gdf.geometry.centroid.x.mean()]
+
+    layers = []
+    pipe_layer = create_pipe_layer(pipe_gdf)
+    if pipe_layer: layers.append(pipe_layer)
+    for layer_type, gdf in [("assets", asset_gdf), ("leaks", leak_gdf), ("valves", valve_gdf)]:
+        l = create_layer(gdf, layer_type)
+        if l: layers.append(l)
+
+    view_state = pdk.ViewState(latitude=center[0], longitude=center[1], zoom=13, pitch=45)
+
+    st.pydeck_chart(pdk.Deck(
+        map_style="mapbox://styles/mapbox/dark-v10",
+        initial_view_state=view_state,
+        layers=layers,
+        tooltip={"text": "{pipe_id} {Material} {Age}"}
+    ), use_container_width=True, height=1100)
+
+# Run
+if st.session_state.page == "upload":
+    show_upload_page()
 else:
-    view_state = pdk.ViewState(latitude=51.5, longitude=-0.1, zoom=12, pitch=45)
-
-# Map Tooltip
-tooltip = {
-    "html": "<b>ID:</b> {pipe_id} {id}<br/><b>Type:</b> {type}<br/><b>Material:</b> {Material}<br/><b>Age:</b> {Age}",
-    "style": {"color": "white"}
-}
-
-# Render Deck Map
-st.pydeck_chart(pdk.Deck(
-    map_style="mapbox://styles/mapbox/dark-v10",
-    initial_view_state=view_state,
-    layers=layers,
-    tooltip=tooltip
-), use_container_width=True, height=1100)
+    show_dashboard()
