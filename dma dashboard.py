@@ -5,14 +5,15 @@ import geopandas as gpd
 import pydeck as pdk
 from datetime import datetime
 
-# Setup
+# Configure layout
 st.set_page_config(layout="wide")
-os.environ["MAPBOX_API_KEY"] = "your-mapbox-token-here"  # ⬅ Replace this!
+os.environ["MAPBOX_API_KEY"] = "your-mapbox-token-here"  # Replace with your token!
 
+# Init fullscreen state
 if "show_map" not in st.session_state:
     st.session_state.show_map = False
 
-# Load shapefile
+# Function to load shapefiles
 def load_shapefile(files, expected_geom):
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -37,7 +38,7 @@ def load_shapefile(files, expected_geom):
         st.sidebar.error(f"Shapefile error: {e}")
         return None
 
-# Pipe layer
+# Pipe layer with criticality color
 def create_pipe_layer(pipe_gdf, criticality_on):
     current_year = datetime.now().year
 
@@ -74,7 +75,7 @@ def create_pipe_layer(pipe_gdf, criticality_on):
         pickable=True
     )
 
-# Point layer
+# Assets/Leaks layer
 def create_point_layer(gdf, color, radius, id_col, type_col, extra_col=None):
     gdf["lon"] = gdf.geometry.x
     gdf["lat"] = gdf.geometry.y
@@ -100,22 +101,23 @@ def create_point_layer(gdf, color, radius, id_col, type_col, extra_col=None):
         pickable=True
     )
 
-# UI
-st.title("💧 DMA Dashboard — Fullscreen Map Mode")
+# App Title
+st.title("💧 DMA Dashboard – Qatium-Style Fullscreen")
 
+# Sidebar Uploads
 criticality_on = st.sidebar.checkbox("Show Pipe Criticality", value=True)
 
 pipe_files = st.sidebar.file_uploader("Upload Pipes", type=["shp", "shx", "dbf", "prj"], accept_multiple_files=True, key="pipes")
 asset_files = st.sidebar.file_uploader("Upload Assets", type=["shp", "shx", "dbf", "prj"], accept_multiple_files=True, key="assets")
 leak_files = st.sidebar.file_uploader("Upload Leaks", type=["shp", "shx", "dbf", "prj"], accept_multiple_files=True, key="leaks")
-node_files = st.sidebar.file_uploader("Upload Nodes (optional)", type=["shp", "shx", "dbf", "prj"], accept_multiple_files=True, key="nodes")
+node_files = st.sidebar.file_uploader("Upload Nodes (Optional)", type=["shp", "shx", "dbf", "prj"], accept_multiple_files=True, key="nodes")
 
 pipe_gdf = load_shapefile(pipe_files, "Line") if pipe_files else None
 asset_gdf = load_shapefile(asset_files, "Point") if asset_files else None
 leak_gdf = load_shapefile(leak_files, "Point") if leak_files else None
 node_gdf = load_shapefile(node_files, "Point") if node_files else None
 
-# Render map
+# Toggle map mode
 if not st.session_state.show_map:
     if st.button("Render Map"):
         if pipe_gdf is None:
@@ -123,26 +125,37 @@ if not st.session_state.show_map:
         else:
             st.session_state.show_map = True
 else:
+    # 🔄 Reset
     if st.button("🔄 Reset View"):
         st.session_state.show_map = False
 
-    # Hide UI for fullscreen effect
+    # 💻 Qatium-style fullscreen layout
     st.markdown("""
         <style>
-            [data-testid="stSidebar"] {display: none;}
-            [data-testid="stHeader"] {display: none;}
-            .block-container {padding: 0rem;}
+            html, body, [data-testid="stAppViewContainer"], [data-testid="stVerticalBlock"] {
+                height: 100vh;
+                width: 100vw;
+                margin: 0;
+                padding: 0;
+                overflow: hidden;
+            }
+            [data-testid="stSidebar"] { display: none; }
+            [data-testid="stHeader"] { display: none; }
+            .block-container {
+                padding: 0;
+                margin: 0;
+            }
         </style>
     """, unsafe_allow_html=True)
 
-    # Layers
+    # Build layers
     layers = [create_pipe_layer(pipe_gdf, criticality_on)]
     if asset_gdf is not None:
         layers.append(create_point_layer(asset_gdf, [0, 200, 255], 40, "AssetID", "AssetType"))
     if leak_gdf is not None:
         layers.append(create_point_layer(leak_gdf, [255, 0, 0], 25, "LeakID", "LeakType", "DateRepor"))
 
-    # Map center
+    # Map center logic
     if node_gdf is not None and not node_gdf.empty:
         lat = node_gdf.geometry.y.mean()
         lon = node_gdf.geometry.x.mean()
@@ -152,24 +165,25 @@ else:
     else:
         lat, lon = 0, 0
 
+    # Show the map using pydeck
     view = pdk.ViewState(latitude=lat, longitude=lon, zoom=13, pitch=45)
 
-    st.pydeck_chart(
-        pdk.Deck(
-            map_style="mapbox://styles/mapbox/dark-v10",
-            initial_view_state=view,
-            layers=layers,
-            tooltip={
-                "html": """
-                    <b>Pipe ID:</b> {pipe_id}<br>
-                    <b>Material:</b> {Material}<br>
-                    <b>Age:</b> {Age}<br>
-                    <b>ID:</b> {id}<br>
-                    <b>Type:</b> {type}<br>
-                    <b>Date:</b> {extra}
-                """,
-                "style": {"color": "white"}
-            }
-        ),
-        use_container_width=True
+    deck = pdk.Deck(
+        map_style="mapbox://styles/mapbox/dark-v10",
+        initial_view_state=view,
+        layers=layers,
+        tooltip={
+            "html": """
+                <b>Pipe ID:</b> {pipe_id}<br>
+                <b>Material:</b> {Material}<br>
+                <b>Age:</b> {Age}<br>
+                <b>ID:</b> {id}<br>
+                <b>Type:</b> {type}<br>
+                <b>Date:</b> {extra}
+            """,
+            "style": {"color": "white"}
+        }
     )
+
+    # Show full screen map
+    st.pydeck_chart(deck, height=1100, use_container_width=True)
