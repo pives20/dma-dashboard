@@ -5,14 +5,14 @@ import pydeck as pdk
 import pandas as pd
 from datetime import datetime
 
-# Streamlit setup
+# Setup
 st.set_page_config(layout="wide")
 os.environ["MAPBOX_API_KEY"] = "pk.eyJ1IjoicGl2ZXMiLCJhIjoiY204bGVweHY5MTFnZDJscXluOTJ1OHI5OCJ9.3BHtAPkRsjGbwgNykec4VA"
 
 if "page" not in st.session_state:
     st.session_state.page = "upload"
 
-# --- PAGE 1: Upload Files ---
+# --- Upload Page ---
 def go_to_dashboard():
     st.session_state.page = "dashboard"
 
@@ -31,7 +31,7 @@ def show_upload_page():
 
     st.button("🚀 Launch Dashboard", on_click=go_to_dashboard)
 
-# --- DATA LOAD ---
+# --- GeoJSON Loader ---
 def load_geojson(uploaded_file):
     if uploaded_file:
         gdf = gpd.read_file(uploaded_file)
@@ -40,7 +40,7 @@ def load_geojson(uploaded_file):
         return gdf[gdf.geometry.notnull()]
     return None
 
-# --- LAYER BUILDERS ---
+# --- Layer Builders ---
 def create_pipe_layer(gdf):
     if gdf is None:
         return None
@@ -77,47 +77,47 @@ def create_point_layer(gdf, color, radius):
         pickable=True
     )
 
-# --- PAGE 2: Dashboard ---
+# --- Map Page ---
 def show_dashboard():
     st.markdown("<style>footer, header, .stSidebar {display: none !important;}</style>", unsafe_allow_html=True)
 
-    # Floating control panel (greyscale)
-    st.markdown("""
-        <div style="position:absolute;top:30px;left:30px;z-index:9999;background:#35354B;padding:20px;border-radius:8px;color:white;">
-            <h4>🧭 Layers</h4>
-            <label><input type="checkbox" checked onchange="location.reload()"> Pipes</label><br>
-            <label><input type="checkbox" checked onchange="location.reload()"> Assets</label><br>
-            <label><input type="checkbox" checked onchange="location.reload()"> Leaks</label><br>
-            <label><input type="checkbox" checked onchange="location.reload()"> Valves</label><br>
-        </div>
-    """, unsafe_allow_html=True)
+    st.sidebar.title("🧭 Map Layers")
+    show_pipes = st.sidebar.checkbox("Pipes", value=True)
+    show_assets = st.sidebar.checkbox("Assets", value=True)
+    show_leaks = st.sidebar.checkbox("Leaks", value=True)
+    show_valves = st.sidebar.checkbox("Valves", value=True)
+    st.sidebar.markdown("---")
+    if st.sidebar.button("⬅️ Back to Upload"):
+        st.session_state.page = "upload"
+        st.experimental_rerun()
 
     pipe_gdf = load_geojson(st.session_state.get("pipes_file"))
     asset_gdf = load_geojson(st.session_state.get("assets_file"))
     leak_gdf = load_geojson(st.session_state.get("leaks_file"))
     valve_gdf = load_geojson(st.session_state.get("valves_file"))
 
-    # Leak timeline filtering
     if leak_gdf is not None and "DateRepor" in leak_gdf.columns:
         leak_gdf["year"] = pd.to_datetime(leak_gdf["DateRepor"], errors="coerce").dt.year
         leak_years = leak_gdf["year"].dropna().unique()
         if len(leak_years) > 0:
-            selected_year = st.slider("🕓 Leak Year", int(leak_years.min()), int(leak_years.max()), int(leak_years.max()))
+            selected_year = st.sidebar.slider("🕓 Leak Year", int(leak_years.min()), int(leak_years.max()), int(leak_years.max()))
             leak_gdf = leak_gdf[leak_gdf["year"] == selected_year]
 
-    # Center view
     center = [51.5, -0.1]
     if pipe_gdf is not None and not pipe_gdf.empty:
         center = [pipe_gdf.geometry.centroid.y.mean(), pipe_gdf.geometry.centroid.x.mean()]
 
     view_state = pdk.ViewState(latitude=center[0], longitude=center[1], zoom=13, pitch=45)
 
-    # Layers
     layers = []
-    if pipe_gdf is not None: layers.append(create_pipe_layer(pipe_gdf))
-    if asset_gdf is not None: layers.append(create_point_layer(asset_gdf, [0, 200, 255], 40))
-    if leak_gdf is not None: layers.append(create_point_layer(leak_gdf, [255, 0, 0], 25))
-    if valve_gdf is not None: layers.append(create_point_layer(valve_gdf, [255, 255, 0], 30))
+    if show_pipes and pipe_gdf is not None:
+        layers.append(create_pipe_layer(pipe_gdf))
+    if show_assets and asset_gdf is not None:
+        layers.append(create_point_layer(asset_gdf, [0, 200, 255], 40))
+    if show_leaks and leak_gdf is not None:
+        layers.append(create_point_layer(leak_gdf, [255, 0, 0], 25))
+    if show_valves and valve_gdf is not None:
+        layers.append(create_point_layer(valve_gdf, [255, 255, 0], 30))
 
     st.pydeck_chart(pdk.Deck(
         map_style="mapbox://styles/mapbox/dark-v10",
