@@ -15,6 +15,7 @@ if "page" not in st.session_state:
 # --- Upload Page ---
 def go_to_dashboard():
     st.session_state.page = "dashboard"
+    st.rerun()
 
 def show_upload_page():
     st.title("📤 Upload Your DMA GeoJSON Files")
@@ -32,17 +33,23 @@ def show_upload_page():
     st.button("🚀 Launch Dashboard", on_click=go_to_dashboard)
 
 # --- GeoJSON Loader ---
-def load_geojson(uploaded_file):
+def load_geojson(uploaded_file, name=""):
     if uploaded_file:
-        gdf = gpd.read_file(uploaded_file)
-        if gdf.crs and gdf.crs.to_string() != "EPSG:4326":
-            gdf = gdf.to_crs("EPSG:4326")
-        return gdf[gdf.geometry.notnull()]
+        try:
+            gdf = gpd.read_file(uploaded_file)
+            if gdf.crs and gdf.crs.to_string() != "EPSG:4326":
+                gdf = gdf.to_crs("EPSG:4326")
+            gdf = gdf[gdf.geometry.notnull()]
+            st.sidebar.success(f"{name}: {len(gdf)} features loaded.")
+            return gdf
+        except Exception as e:
+            st.sidebar.error(f"❌ Failed to load {name}: {e}")
+            return None
     return None
 
 # --- Layer Builders ---
 def create_pipe_layer(gdf):
-    if gdf is None:
+    if gdf is None or gdf.empty:
         return None
     features = []
     for _, row in gdf.iterrows():
@@ -58,13 +65,13 @@ def create_pipe_layer(gdf):
         "PathLayer",
         data=features,
         get_path="path",
-        get_color=[75, 181, 190],  # Qatium blue
+        get_color=[75, 181, 190],
         get_width=4,
         pickable=True
     )
 
 def create_point_layer(gdf, color, radius):
-    if gdf is None:
+    if gdf is None or gdf.empty:
         return None
     gdf["lon"] = gdf.geometry.x
     gdf["lat"] = gdf.geometry.y
@@ -79,8 +86,6 @@ def create_point_layer(gdf, color, radius):
 
 # --- Map Page ---
 def show_dashboard():
-    st.markdown("<style>footer, header, .stSidebar {display: none !important;}</style>", unsafe_allow_html=True)
-
     st.sidebar.title("🧭 Map Layers")
     show_pipes = st.sidebar.checkbox("Pipes", value=True)
     show_assets = st.sidebar.checkbox("Assets", value=True)
@@ -89,13 +94,15 @@ def show_dashboard():
     st.sidebar.markdown("---")
     if st.sidebar.button("⬅️ Back to Upload"):
         st.session_state.page = "upload"
-        st.experimental_rerun()
+        st.rerun()
 
-    pipe_gdf = load_geojson(st.session_state.get("pipes_file"))
-    asset_gdf = load_geojson(st.session_state.get("assets_file"))
-    leak_gdf = load_geojson(st.session_state.get("leaks_file"))
-    valve_gdf = load_geojson(st.session_state.get("valves_file"))
+    # Load data
+    pipe_gdf = load_geojson(st.session_state.get("pipes_file"), "Pipes")
+    asset_gdf = load_geojson(st.session_state.get("assets_file"), "Assets")
+    leak_gdf = load_geojson(st.session_state.get("leaks_file"), "Leaks")
+    valve_gdf = load_geojson(st.session_state.get("valves_file"), "Valves")
 
+    # Filter leaks by year
     if leak_gdf is not None and "DateRepor" in leak_gdf.columns:
         leak_gdf["year"] = pd.to_datetime(leak_gdf["DateRepor"], errors="coerce").dt.year
         leak_years = leak_gdf["year"].dropna().unique()
@@ -103,12 +110,16 @@ def show_dashboard():
             selected_year = st.sidebar.slider("🕓 Leak Year", int(leak_years.min()), int(leak_years.max()), int(leak_years.max()))
             leak_gdf = leak_gdf[leak_gdf["year"] == selected_year]
 
+    # Auto-center
     center = [51.5, -0.1]
     if pipe_gdf is not None and not pipe_gdf.empty:
         center = [pipe_gdf.geometry.centroid.y.mean(), pipe_gdf.geometry.centroid.x.mean()]
+    elif asset_gdf is not None and not asset_gdf.empty:
+        center = [asset_gdf.geometry.y.mean(), asset_gdf.geometry.x.mean()]
 
     view_state = pdk.ViewState(latitude=center[0], longitude=center[1], zoom=13, pitch=45)
 
+    # Layers
     layers = []
     if show_pipes and pipe_gdf is not None:
         layers.append(create_pipe_layer(pipe_gdf))
@@ -119,6 +130,7 @@ def show_dashboard():
     if show_valves and valve_gdf is not None:
         layers.append(create_point_layer(valve_gdf, [255, 255, 0], 30))
 
+    # Map
     st.pydeck_chart(pdk.Deck(
         map_style="mapbox://styles/mapbox/dark-v10",
         initial_view_state=view_state,
@@ -126,7 +138,7 @@ def show_dashboard():
         tooltip={"text": "<b>ID:</b> {pipe_id}<br><b>Material:</b> {Material}<br><b>Age:</b> {Age}"}
     ), use_container_width=True, height=1100)
 
-# --- Run App ---
+# --- Run ---
 if st.session_state.page == "upload":
     show_upload_page()
 else:
